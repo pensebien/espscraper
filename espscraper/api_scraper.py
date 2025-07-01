@@ -16,6 +16,7 @@ from selenium.webdriver.chrome.options import Options
 import urllib.parse
 from dotenv import load_dotenv
 import argparse
+import math
 
 # --- CONFIGURATION ---
 load_dotenv() # Load variables from .env file
@@ -38,7 +39,10 @@ class ApiScraper(BaseScraper):
         self.GOTO_PAGE_API_URL = os.getenv("GOTO_PAGE_API_URL")
         self.PRODUCTS_URL = os.getenv("PRODUCTS_URL")
         self.PRODUCT_URL_TEMPLATE = os.getenv("PRODUCT_URL_TEMPLATE")
-        self.OUTPUT_FILE = os.getenv("OUTPUT_FILE", "api_scraped_links.jsonl")
+        # Ensure data directory exists
+        data_dir = os.path.join(os.path.dirname(__file__), 'data')
+        os.makedirs(data_dir, exist_ok=True)
+        self.OUTPUT_FILE = os.getenv("OUTPUT_FILE", os.path.join(data_dir, "api_scraped_links.jsonl"))
         self.TOTAL_PAGES_TO_SCRAPE = int(os.getenv("TOTAL_PAGES_TO_SCRAPE", 100))
         if not all([self.USERNAME, self.PASSWORD, self.SEARCH_API_URL, self.GOTO_PAGE_API_URL, self.PRODUCTS_URL, self.PRODUCT_URL_TEMPLATE]):
             raise ValueError("All required .env variables must be set.")
@@ -63,26 +67,36 @@ class ApiScraper(BaseScraper):
                 })
         return products
 
-    def collect_product_links(self, force_relogin=False, pages=None):
-        page_key, search_id = self.session_manager.selenium_login_and_get_session_data(
-            self.USERNAME, self.PASSWORD, self.PRODUCTS_URL, force_relogin=force_relogin
-        )
-        if not page_key or not search_id:
-            print("❌ Could not get pageKey or searchId. Aborting.")
-            return
-        session = requests.Session()
-        headers = {
-            'Accept': 'application/json, text/plain, */*',
-            'Content-Type': 'application/json;charset=UTF-8',
-            'Referer': self.PRODUCTS_URL,
-            'User-Agent': 'Mozilla/5.0',
-        }
-        session.headers.update(headers)
-        cookies, _, _ = self.session_manager.load_state()
-        if cookies:
-            for cookie in cookies:
-                session.cookies.set(cookie['name'], cookie['value'], domain=cookie.get('domain'))
-        self.session = session
+    def collect_product_links(self, force_relogin=False, pages=None, limit=None):
+        import os
+        checkpoint_file = self.OUTPUT_FILE.replace('.jsonl', '.checkpoint.txt')
+        metadata_file = self.OUTPUT_FILE.replace('.jsonl', '.meta.json')
+        # Determine where to start
+        if os.path.exists(checkpoint_file):
+            with open(checkpoint_file, 'r') as f:
+                try:
+                    last_page = int(f.read().strip())
+                    start_page = last_page + 1
+                    print(f"🔄 Resuming from page {start_page} (last completed: {last_page})")
+                except Exception:
+                    start_page = 2
+        else:
+            start_page = 2
+        def get_session_and_ids():
+            cookies, page_key, search_id = self.session_manager.load_state()
+            session = requests.Session()
+            headers = {
+                'Accept': 'application/json, text/plain, */*',
+                'Content-Type': 'application/json;charset=UTF-8',
+                'Referer': self.PRODUCTS_URL,
+                'User-Agent': 'Mozilla/5.0',
+            }
+            session.headers.update(headers)
+            if cookies:
+                for cookie in cookies:
+                    session.cookies.set(cookie['name'], cookie['value'], domain=cookie.get('domain'))
+            return session, page_key, search_id
+        session, page_key, search_id = get_session_and_ids()
         search_payload = {
             "extraParams": f"SearchId={search_id}",
             "type": "SavedSearch",
@@ -93,48 +107,143 @@ class ApiScraper(BaseScraper):
             "searchState": "",
             "stats": ""
         }
+        all_products = []
+        results_per_page = 22
+        results_total = 0
+        total_pages_dynamic = self.TOTAL_PAGES_TO_SCRAPE
+        # Try first API call with saved session
         try:
-            response = self.session.post(self.SEARCH_API_URL, json=search_payload, timeout=30)
-            response.raise_for_status()
+            response = session.post(self.SEARCH_API_URL, json=search_payload, timeout=30)
+            if response.status_code in (401, 403):
+                raise Exception("Session not authenticated (status code)")
             initial_data = response.json()
             search_state_str = initial_data.get('d', {}).get('SearchState')
             if not search_state_str:
-                print("❌ Could not extract SearchState from initial response. Aborting.")
-                return
-            all_products = self.extract_products_from_json(initial_data)
-            seen_ids = {p['id'] for p in all_products}
+                raise Exception("No SearchState in response (possible login required)")
+            results_per_page = initial_data['d'].get('ResultsPerPage', 22)
+            results_total = initial_data['d'].get('resultsTotal', 0)
+            try:
+                total_pages_dynamic = math.ceil(results_total / results_per_page) if results_per_page else 1
+            except Exception:
+                total_pages_dynamic = self.TOTAL_PAGES_TO_SCRAPE
+            try:
+                with open(metadata_file, 'w') as meta_f:
+                    json.dump({
+                        'ResultsPerPage': results_per_page,
+                        'resultsTotal': results_total,
+                        'totalPages': total_pages_dynamic
+                    }, meta_f, indent=2)
+            except Exception as meta_e:
+                print(f"⚠️ Could not write metadata file: {meta_e}")
+            # Write first page links if resuming from start
+            if start_page == 2:
+                all_products = self.extract_products_from_json(initial_data)
+                if limit is not None:
+                    all_products = all_products[:limit]
+                try:
+                    with open(self.OUTPUT_FILE, 'a') as f_out:
+                        for product in all_products:
+                            f_out.write(json.dumps(product) + '\n')
+                except Exception as f_e:
+                    print(f"⚠️ Could not write to output file: {f_e}")
+                try:
+                    with open(checkpoint_file, 'w') as f:
+                        f.write('1')
+                except Exception as c_e:
+                    print(f"⚠️ Could not write checkpoint file: {c_e}")
+            else:
+                all_products = self.extract_products_from_json(initial_data)
         except Exception as e:
-            print(f"❌ Initial SearchProduct request failed: {e}")
-            return
-        total_pages = pages if pages is not None else self.TOTAL_PAGES_TO_SCRAPE
-        for page_num in range(2, total_pages + 1):
+            print(f"⚠️ Saved session failed or expired: {e}. Launching Selenium login...")
+            page_key, search_id = self.session_manager.selenium_login_and_get_session_data(
+                self.USERNAME, self.PASSWORD, self.PRODUCTS_URL, force_relogin=True
+            )
+            if not page_key or not search_id:
+                print("❌ Could not get pageKey or searchId after login. Aborting.")
+                return
+            session, _, _ = get_session_and_ids()
+            search_payload["pageKey"] = page_key
+            search_payload["extraParams"] = f"SearchId={search_id}"
+            try:
+                response = session.post(self.SEARCH_API_URL, json=search_payload, timeout=30)
+                response.raise_for_status()
+                initial_data = response.json()
+                search_state_str = initial_data.get('d', {}).get('SearchState')
+                if not search_state_str:
+                    print("❌ Could not extract SearchState from initial response. Aborting.")
+                    return
+                results_per_page = initial_data['d'].get('ResultsPerPage', 22)
+                results_total = initial_data['d'].get('resultsTotal', 0)
+                try:
+                    total_pages_dynamic = math.ceil(results_total / results_per_page) if results_per_page else 1
+                except Exception:
+                    total_pages_dynamic = self.TOTAL_PAGES_TO_SCRAPE
+                try:
+                    with open(metadata_file, 'w') as meta_f:
+                        json.dump({
+                            'ResultsPerPage': results_per_page,
+                            'resultsTotal': results_total,
+                            'totalPages': total_pages_dynamic
+                        }, meta_f, indent=2)
+                except Exception as meta_e:
+                    print(f"⚠️ Could not write metadata file: {meta_e}")
+                if start_page == 2:
+                    all_products = self.extract_products_from_json(initial_data)
+                    if limit is not None:
+                        all_products = all_products[:limit]
+                    try:
+                        with open(self.OUTPUT_FILE, 'a') as f_out:
+                            for product in all_products:
+                                f_out.write(json.dumps(product) + '\n')
+                    except Exception as f_e:
+                        print(f"⚠️ Could not write to output file: {f_e}")
+                    try:
+                        with open(checkpoint_file, 'w') as f:
+                            f.write('1')
+                    except Exception as c_e:
+                        print(f"⚠️ Could not write checkpoint file: {c_e}")
+                else:
+                    all_products = self.extract_products_from_json(initial_data)
+            except Exception as e2:
+                print(f"❌ Initial SearchProduct request failed after login: {e2}")
+                return
+        # Use dynamic total_pages unless user overrides with --pages
+        if limit is not None:
+            total_pages = math.ceil(limit / results_per_page)
+        else:
+            total_pages = pages if pages is not None else total_pages_dynamic
+        products_collected = len(all_products)
+        for page_num in range(start_page, total_pages + 1):
+            if limit is not None and products_collected >= limit:
+                break
             goto_payload = {
                 "page": page_num, "adApplicationCode": "ESPO", "appCode": "WESP", "appVersion": "4.1.0",
                 "extraParams": f"SearchId={search_id}", "pageKey": page_key, "searchState": search_state_str,
                 "stats": ""
             }
             try:
-                response = self.session.post(self.GOTO_PAGE_API_URL, json=goto_payload, timeout=30)
+                response = session.post(self.GOTO_PAGE_API_URL, json=goto_payload, timeout=30)
                 response.raise_for_status()
                 page_data = response.json()
                 new_products = self.extract_products_from_json(page_data)
                 if not new_products:
                     break
-                unique_new_products = []
-                for product in new_products:
-                    if product['id'] not in seen_ids:
-                        unique_new_products.append(product)
-                        seen_ids.add(product['id'])
-                all_products.extend(unique_new_products)
+                if limit is not None:
+                    remaining = limit - products_collected
+                    new_products = new_products[:remaining]
+                with open(self.OUTPUT_FILE, 'a') as f_out:
+                    for product in new_products:
+                        f_out.write(json.dumps(product) + '\n')
+                products_collected += len(new_products)
+                with open(checkpoint_file, 'w') as f:
+                    f.write(str(page_num))
+                print(f"✅ Page {page_num} complete. {len(new_products)} products written. Total collected: {products_collected}")
                 time.sleep(1)
             except Exception as e:
                 print(f"❌ Request for page {page_num} failed: {e}")
                 break
-        with open(self.OUTPUT_FILE, 'w') as f_out:
-            for product in all_products:
-                f_out.write(json.dumps(product) + '\n')
-        print(f"✅ Scraping complete. Total unique products found: {len(all_products)}")
-        print(f"Data saved to '{self.OUTPUT_FILE}'.")
+        print(f"✅ Link collection complete up to page {page_num if 'page_num' in locals() else 1}.")
+        print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
 
 def get_authenticated_session_data(driver):
     """
@@ -290,10 +399,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--pages', type=int, default=None, help='Number of pages to scrape')
     parser.add_argument('--force-relogin', action='store_true', help='Force a fresh Selenium login')
+    parser.add_argument('--limit', type=int, default=None, help='Number of product links to collect (not pages)')
     args = parser.parse_args()
     session_manager = SessionManager()
     scraper = ApiScraper(session_manager)
-    scraper.collect_product_links(force_relogin=args.force_relogin, pages=args.pages)
+    scraper.collect_product_links(force_relogin=args.force_relogin, pages=args.pages, limit=args.limit)
 
 if __name__ == "__main__":
     main() 

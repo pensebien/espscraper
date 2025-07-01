@@ -13,9 +13,10 @@ A robust, production-ready Python scraper for monitoring and extracting product 
 2. **Configure your `.env` file:**
    - `ESP_USERNAME` and `ESP_PASSWORD` (required)
    - `PRODUCTS_URL`, `DETAILS_OUTPUT_FILE`, `DETAILS_LINKS_FILE` (see below)
+   - By default, output, checkpoint, and metadata files are saved in `espscraper/data/`.
 3. **Run the scraper:**
    ```bash
-   python run_scraper.py --limit 100 --headless --log-file scraper.log
+   python -m espscraper --limit 100 --headless --log-file scraper.log
    ```
 
 ## CLI Options
@@ -36,15 +37,15 @@ A robust, production-ready Python scraper for monitoring and extracting product 
 - `ESP_USERNAME` (required)
 - `ESP_PASSWORD` (required)
 - `PRODUCTS_URL` (required)
-- `DETAILS_OUTPUT_FILE` (default: `final_product_details.jsonl`)
-- `DETAILS_LINKS_FILE` (default: `api_scraped_links_fixed.jsonl`)
+- `DETAILS_OUTPUT_FILE` (default: `espscraper/data/final_product_details.jsonl`)
+- `DETAILS_LINKS_FILE` (default: `espscraper/data/api_scraped_links.jsonl`)
 
 ## Batching Example
 
 To process 500 products per batch (8 batches for 4000 products):
 ```bash
-python run_scraper.py --batch-size 500 --batch-number 0
-python run_scraper.py --batch-size 500 --batch-number 1
+python -m espscraper --batch-size 500 --batch-number 0
+python -m espscraper  --batch-size 500 --batch-number 1
 # ... up to batch-number 7
 ```
 
@@ -54,10 +55,24 @@ python run_scraper.py --batch-size 500 --batch-number 1
 
 ## Logging
 - Use `--log-file` to log output to a file for cron/production use.
+- If you provide just a filename (e.g., `--log-file scraper.log`), the log will be placed in the `log/` folder by default. The `log` folder is created automatically if it does not exist.
 
 ## Temp/Session Files
 - Session/cookie files are stored in `tmp/`.
 - Use `--clear-session` to clear session/cache before running.
+
+## Output, Metadata, and Checkpoint Files
+
+- **Output links file:** Default is `espscraper/data/api_scraped_links.jsonl` (can be changed with `OUTPUT_FILE` or `DETAILS_LINKS_FILE` env var)
+- **Product details output file:** Default is `espscraper/data/final_product_details.jsonl` (can be changed with `DETAILS_OUTPUT_FILE` env var)
+- **Metadata file:** `espscraper/data/api_scraped_links.meta.json` (contains `ResultsPerPage`, `resultsTotal`, and `totalPages`)
+- **Checkpoint file:** `espscraper/data/api_scraped_links.checkpoint.txt` (tracks last completed page for resuming)
+
+All files are created if they do not exist. The scraper is robust to missing files and will use sensible defaults if metadata is missing.
+
+## Dynamic Paging
+
+The scraper automatically determines the number of pages to scrape based on the first search response (`ResultsPerPage` and `resultsTotal`). You do not need to specify the number of pages unless you want to override it with `--pages`.
 
 ## License
 MIT 

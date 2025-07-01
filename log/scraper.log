@@ -1,0 +1,4 @@
+2025-07-01 06:51:33,162 INFO ====== WebDriver manager ======
+2025-07-01 06:51:33,332 INFO Get LATEST chromedriver version for google-chrome
+2025-07-01 06:51:33,662 INFO Get LATEST chromedriver version for google-chrome
+2025-07-01 06:51:33,987 INFO Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/137.0.7151.119/chromedriver-mac-arm64/chromedriver] found in cache

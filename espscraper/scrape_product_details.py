@@ -26,8 +26,11 @@ class ProductDetailScraper(BaseScraper):
         self.USERNAME = os.getenv("ESP_USERNAME")
         self.PASSWORD = os.getenv("ESP_PASSWORD")
         self.PRODUCTS_URL = os.getenv("PRODUCTS_URL")
-        self.OUTPUT_FILE = output_file or os.getenv("DETAILS_OUTPUT_FILE", "final_product_details.jsonl")
-        self.LINKS_FILE = links_file or os.getenv("DETAILS_LINKS_FILE", "api_scraped_links_fixed.jsonl")
+        # Ensure data directory exists
+        data_dir = os.path.join(os.path.dirname(__file__), 'data')
+        os.makedirs(data_dir, exist_ok=True)
+        self.OUTPUT_FILE = output_file or os.getenv("DETAILS_OUTPUT_FILE", os.path.join(data_dir, "final_product_details.jsonl"))
+        self.LINKS_FILE = links_file or os.getenv("DETAILS_LINKS_FILE", os.path.join(data_dir, "api_scraped_links.jsonl"))
         self.limit = limit
         self.driver = None
         self.headless = headless

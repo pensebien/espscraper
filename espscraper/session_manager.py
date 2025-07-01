@@ -71,18 +71,48 @@ class SessionManager:
             os.remove(self.state_file)
             print(f"🗑️ Deleted state file {self.state_file}")
 
-    def selenium_login_and_get_session_data(self, username, password, products_url, force_relogin=False):
+    def selenium_login_and_get_session_data(self, username, password, products_url, search_api_url=None, force_relogin=False):
         """
         Automates Selenium login, saves cookies, and extracts pageKey and searchId.
         Returns (pageKey, searchId). Uses saved state if available and not forced.
+        If search_api_url is provided, will check session validity before reusing.
         """
+        import requests
         if not force_relogin:
             cookies, page_key, search_id = self.load_state()
             if cookies and page_key and search_id:
-                with open(self.cookie_file, 'w') as f:
-                    json.dump(cookies, f)
-                print(f"✅ Loaded session state from {self.state_file}")
-                return page_key, search_id
+                # Session validity check
+                if search_api_url:
+                    session = requests.Session()
+                    for cookie in cookies:
+                        if self.domain in cookie.get('domain', ''):
+                            session.cookies.set(cookie['name'], cookie['value'], domain=cookie.get('domain'))
+                    payload = {
+                        "extraParams": f"SearchId={search_id}",
+                        "type": "SavedSearch",
+                        "adApplicationCode": "ESPO",
+                        "appCode": "WESP",
+                        "appVersion": "4.1.0",
+                        "pageKey": page_key,
+                        "searchState": "",
+                        "stats": ""
+                    }
+                    try:
+                        resp = session.post(search_api_url, json=payload, timeout=10)
+                        if resp.status_code == 200 and 'd' in resp.json():
+                            with open(self.cookie_file, 'w') as f:
+                                json.dump(cookies, f)
+                            print(f"✅ Loaded and validated session state from {self.state_file}")
+                            return page_key, search_id
+                        else:
+                            print("⚠️ Saved session invalid, will relogin.")
+                    except Exception as e:
+                        print(f"⚠️ Session validity check failed: {e}. Will relogin.")
+                else:
+                    with open(self.cookie_file, 'w') as f:
+                        json.dump(cookies, f)
+                    print(f"✅ Loaded session state from {self.state_file}")
+                    return page_key, search_id
         # Otherwise, do Selenium login
         print("🤖 Launching Selenium to get authenticated session...")
         options = Options()

@@ -7,7 +7,8 @@ from espscraper.scrape_product_details import ProductDetailScraper
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="ESP Product Detail Scraper (Production Entry Point)")
-    parser.add_argument('--limit', type=int, default=None)
+    parser.add_argument('--collect-links', action='store_true', help='Run link scraper before detail scraper (uses --limit for number of links)')
+    parser.add_argument('--limit', type=int, default=None, help='Limit the number of products to scrape (and links to collect if --collect-links is set)')
     parser.add_argument('--headless', action='store_true')
     parser.add_argument('--force-relogin', action='store_true')
     parser.add_argument('--output-file', type=str, default=None)
@@ -18,6 +19,14 @@ def main():
     parser.add_argument('--log-file', type=str, default=None)
     parser.add_argument('--clear-session', action='store_true', help='Clear session/cache before running')
     args = parser.parse_args()
+
+    # Ensure log directory exists if log-file is specified
+    if args.log_file:
+        log_dir = 'log'
+        os.makedirs(log_dir, exist_ok=True)
+        # If only a filename is given, place it in the log folder
+        if not os.path.dirname(args.log_file):
+            args.log_file = os.path.join(log_dir, args.log_file)
 
     # Setup logging
     logging.basicConfig(
@@ -45,6 +54,11 @@ def main():
                 pass
 
     try:
+        if args.collect_links:
+            from espscraper.api_scraper import ApiScraper
+            session_manager = SessionManager()
+            scraper = ApiScraper(session_manager)
+            scraper.collect_product_links(force_relogin=args.force_relogin, limit=args.limit)
         if args.overwrite_output:
             output_file = args.output_file or os.getenv("DETAILS_OUTPUT_FILE", "final_product_details.jsonl")
             open(output_file, 'w').close()  # Truncate the file
