@@ -1,0 +1,80 @@
+import logging
+import sys
+import os
+from espscraper.session_manager import SessionManager
+from espscraper.scrape_product_details import ProductDetailScraper
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="ESP Product Detail Scraper (Production Entry Point)")
+    parser.add_argument('--limit', type=int, default=None)
+    parser.add_argument('--headless', action='store_true')
+    parser.add_argument('--force-relogin', action='store_true')
+    parser.add_argument('--output-file', type=str, default=None)
+    parser.add_argument('--links-file', type=str, default=None)
+    parser.add_argument('--overwrite-output', action='store_true')
+    parser.add_argument('--batch-size', type=int, default=None)
+    parser.add_argument('--batch-number', type=int, default=None)
+    parser.add_argument('--log-file', type=str, default=None)
+    parser.add_argument('--clear-session', action='store_true', help='Clear session/cache before running')
+    args = parser.parse_args()
+
+    # Setup logging
+    logging.basicConfig(
+        filename=args.log_file,
+        level=logging.INFO,
+        format='%(asctime)s %(levelname)s %(message)s'
+    )
+    logger = logging.getLogger()
+    if not args.log_file:
+        # Also log to stdout
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+        logger.addHandler(handler)
+
+    # Ensure tmp directory exists
+    os.makedirs('tmp', exist_ok=True)
+
+    # Optionally clear session/cache
+    if args.clear_session:
+        for f in ['tmp/session_cookies.json', 'tmp/session_state.json']:
+            try:
+                os.remove(f)
+                logging.info(f"Deleted {f}")
+            except FileNotFoundError:
+                pass
+
+    try:
+        if args.overwrite_output:
+            output_file = args.output_file or os.getenv("DETAILS_OUTPUT_FILE", "final_product_details.jsonl")
+            open(output_file, 'w').close()  # Truncate the file
+            logging.warning(f"Output file '{output_file}' has been cleared.")
+        session_manager = SessionManager(
+            cookie_file='tmp/session_cookies.json',
+            state_file='tmp/session_state.json'
+        )
+        scraper = ProductDetailScraper(
+            session_manager,
+            headless=args.headless,
+            limit=args.limit,
+            output_file=args.output_file,
+            links_file=args.links_file
+        )
+        # Batching logic
+        if args.batch_size is not None and args.batch_number is not None:
+            all_links = scraper.read_product_links()
+            start = args.batch_number * args.batch_size
+            end = start + args.batch_size
+            batch_links = all_links[start:end]
+            def batch_read_links():
+                return batch_links
+            scraper.read_product_links = batch_read_links
+            logging.info(f"Processing batch {args.batch_number} (products {start} to {end-1})")
+        scraper.scrape_all_details(force_relogin=args.force_relogin)
+    except Exception as e:
+        logging.exception("Fatal error in main")
+        print(f"Fatal error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main() 
