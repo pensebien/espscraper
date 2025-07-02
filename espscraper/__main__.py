@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--batch-number', type=int, default=None)
     parser.add_argument('--log-file', type=str, default=None)
     parser.add_argument('--clear-session', action='store_true', help='Clear session/cache before running')
+    parser.add_argument('--new-only', action='store_true', help='Only collect links for products not already scraped (based on the detail output file)')
     args = parser.parse_args()
 
     # Ensure log directory exists if log-file is specified
@@ -58,7 +59,7 @@ def main():
             from espscraper.api_scraper import ApiScraper
             session_manager = SessionManager()
             scraper = ApiScraper(session_manager)
-            scraper.collect_product_links(force_relogin=args.force_relogin, limit=args.limit)
+            scraper.collect_product_links(force_relogin=args.force_relogin, limit=args.limit, new_only=args.new_only, detail_output_file=args.output_file)
         if args.overwrite_output:
             output_file = args.output_file or os.getenv("DETAILS_OUTPUT_FILE", "final_product_details.jsonl")
             open(output_file, 'w').close()  # Truncate the file

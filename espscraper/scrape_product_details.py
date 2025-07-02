@@ -383,8 +383,9 @@ class ProductDetailScraper(BaseScraper):
             except:
                 pass
 
-            # --- UpdateDate (prefer JS variable) ---
+            # --- UpdateDate and ProductURL (prefer JS variable) ---
             update_date = None
+            product_url = None
             try:
                 # Try to extract from JS context
                 product_json = self.driver.execute_script("return (typeof Product !== 'undefined') ? JSON.stringify(Product) : null;")
@@ -392,6 +393,7 @@ class ProductDetailScraper(BaseScraper):
                     import json as _json
                     product_js = _json.loads(product_json)
                     update_date = product_js.get('UpdateDate')
+                    product_url = product_js.get('ProductURL')
             except:
                 pass
             # Fallback to HTML if not found
@@ -412,6 +414,7 @@ class ProductDetailScraper(BaseScraper):
             return {
                 "ProductID": product_id,
                 "UpdateDate": update_date,
+                "ProductURL": product_url,
                 "ProductCPN": product_cpn,
                 "URL": current_url,
                 "Name": name,

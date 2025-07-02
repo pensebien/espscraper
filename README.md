@@ -74,5 +74,50 @@ All files are created if they do not exist. The scraper is robust to missing fil
 
 The scraper automatically determines the number of pages to scrape based on the first search response (`ResultsPerPage` and `resultsTotal`). You do not need to specify the number of pages unless you want to override it with `--pages`.
 
+## Running Only Link Scraper or Product Detail Scraper
+
+You can run each part of the scraper independently:
+
+### 1. Run Only the Link Scraper
+Collect product links and save them to the data folder:
+
+```bash
+python -m espscraper.api_scraper
+```
+
+**Options:**
+- `--pages N` — Limit the number of pages to scrape
+- `--limit N` — Limit the number of product links to collect
+- `--new-only` — Only collect links for products not already scraped (based on your detail output file)
+
+**Example:**
+```bash
+python -m espscraper.api_scraper --limit 50 --new-only
+```
+
+### 2. Run Only the Product Detail Scraper
+Read the links file and scrape product details:
+
+```bash
+python -m espscraper
+```
+
+**Options:**
+- `--limit N` — Limit the number of product details to scrape
+- `--headless` — Run the browser in headless mode
+- `--log-file mylog.log` — Save logs to a file
+
+**Example:**
+```bash
+python -m espscraper --limit 50 --headless --log-file details.log
+```
+
+### 3. Run Both in Sequence
+To run both link collection and detail scraping in one command:
+
+```bash
+python -m espscraper --collect-links --limit 50 --new-only --headless
+```
+
 ## License
 MIT 

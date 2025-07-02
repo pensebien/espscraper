@@ -12,10 +12,13 @@ import time
 import urllib.parse
 
 class SessionManager:
-    def __init__(self, cookie_file='session_cookies.json', domain='.asicentral.com', state_file='session_state.json'):
+    def __init__(self, cookie_file='tmp/session_cookies.json', domain='.asicentral.com', state_file='tmp/session_state.json'):
         self.cookie_file = cookie_file
         self.domain = domain
         self.state_file = state_file
+        # Ensure tmp directory exists
+        tmp_dir = os.path.dirname(self.cookie_file) or 'tmp'
+        os.makedirs(tmp_dir, exist_ok=True)
 
     def save_state(self, cookies, page_key, search_id):
         state = {

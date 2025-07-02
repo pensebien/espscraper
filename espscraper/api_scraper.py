@@ -67,10 +67,23 @@ class ApiScraper(BaseScraper):
                 })
         return products
 
-    def collect_product_links(self, force_relogin=False, pages=None, limit=None):
+    def collect_product_links(self, force_relogin=False, pages=None, limit=None, new_only=False, detail_output_file=None):
         import os
         checkpoint_file = self.OUTPUT_FILE.replace('.jsonl', '.checkpoint.txt')
         metadata_file = self.OUTPUT_FILE.replace('.jsonl', '.meta.json')
+        # Load already-scraped product IDs if new_only is set
+        already_scraped_ids = set()
+        if new_only and detail_output_file and os.path.exists(detail_output_file):
+            with open(detail_output_file, 'r') as f:
+                for line in f:
+                    try:
+                        data = json.loads(line)
+                        pid = data.get('productId') or data.get('ProductID')
+                        if pid:
+                            already_scraped_ids.add(str(pid))
+                    except Exception:
+                        continue
+            print(f"🔎 Loaded {len(already_scraped_ids)} already-scraped product IDs from {detail_output_file}")
         # Determine where to start
         if os.path.exists(checkpoint_file):
             with open(checkpoint_file, 'r') as f:
@@ -117,11 +130,16 @@ class ApiScraper(BaseScraper):
             if response.status_code in (401, 403):
                 raise Exception("Session not authenticated (status code)")
             initial_data = response.json()
+            print("🔎 First page API response:")
             search_state_str = initial_data.get('d', {}).get('SearchState')
             if not search_state_str:
                 raise Exception("No SearchState in response (possible login required)")
             results_per_page = initial_data['d'].get('ResultsPerPage', 22)
-            results_total = initial_data['d'].get('resultsTotal', 0)
+            results_total = initial_data['d'].get('ResultsTotal', 0)
+            if results_total:
+                print(f"📊 Total products available: {results_total}")
+            else:
+                print("⚠️ Warning: resultsTotal not found in API response.")
             try:
                 total_pages_dynamic = math.ceil(results_total / results_per_page) if results_per_page else 1
             except Exception:
@@ -168,12 +186,18 @@ class ApiScraper(BaseScraper):
                 response = session.post(self.SEARCH_API_URL, json=search_payload, timeout=30)
                 response.raise_for_status()
                 initial_data = response.json()
+                print("🔎 First page API response:")
+                print(json.dumps(initial_data, indent=2))
                 search_state_str = initial_data.get('d', {}).get('SearchState')
                 if not search_state_str:
                     print("❌ Could not extract SearchState from initial response. Aborting.")
                     return
                 results_per_page = initial_data['d'].get('ResultsPerPage', 22)
                 results_total = initial_data['d'].get('resultsTotal', 0)
+                if results_total:
+                    print(f"📊 Total products available: {results_total}")
+                else:
+                    print("⚠️ Warning: resultsTotal not found in API response.")
                 try:
                     total_pages_dynamic = math.ceil(results_total / results_per_page) if results_per_page else 1
                 except Exception:
@@ -213,7 +237,12 @@ class ApiScraper(BaseScraper):
         else:
             total_pages = pages if pages is not None else total_pages_dynamic
         products_collected = len(all_products)
+        new_links_collected = 0
         for page_num in range(start_page, total_pages + 1):
+            if results_total:
+                print(f"➡️  Fetching page {page_num}/{total_pages} (Total products: {results_total})")
+            else:
+                print(f"➡️  Fetching page {page_num}/{total_pages}")
             if limit is not None and products_collected >= limit:
                 break
             goto_payload = {
@@ -231,10 +260,16 @@ class ApiScraper(BaseScraper):
                 if limit is not None:
                     remaining = limit - products_collected
                     new_products = new_products[:remaining]
-                with open(self.OUTPUT_FILE, 'a') as f_out:
-                    for product in new_products:
+                for product in new_products:
+                    pid = product.get('productId') or product.get('ProductID')
+                    if new_only and pid and str(pid) in already_scraped_ids:
+                        continue  # skip already scraped
+                    with open(self.OUTPUT_FILE, 'a') as f_out:
                         f_out.write(json.dumps(product) + '\n')
-                products_collected += len(new_products)
+                    products_collected += 1
+                    new_links_collected += 1
+                    if limit and new_links_collected >= limit:
+                        break
                 with open(checkpoint_file, 'w') as f:
                     f.write(str(page_num))
                 print(f"✅ Page {page_num} complete. {len(new_products)} products written. Total collected: {products_collected}")
@@ -244,6 +279,7 @@ class ApiScraper(BaseScraper):
                 break
         print(f"✅ Link collection complete up to page {page_num if 'page_num' in locals() else 1}.")
         print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+        print(f"✅ Collected {new_links_collected} new product links.")
 
 def get_authenticated_session_data(driver):
     """
@@ -400,10 +436,12 @@ def main():
     parser.add_argument('--pages', type=int, default=None, help='Number of pages to scrape')
     parser.add_argument('--force-relogin', action='store_true', help='Force a fresh Selenium login')
     parser.add_argument('--limit', type=int, default=None, help='Number of product links to collect (not pages)')
+    parser.add_argument('--new-only', action='store_true', help='Collect only new product links')
+    parser.add_argument('--detail-output-file', help='File containing already scraped product IDs')
     args = parser.parse_args()
     session_manager = SessionManager()
     scraper = ApiScraper(session_manager)
-    scraper.collect_product_links(force_relogin=args.force_relogin, pages=args.pages, limit=args.limit)
+    scraper.collect_product_links(force_relogin=args.force_relogin, pages=args.pages, limit=args.limit, new_only=args.new_only, detail_output_file=args.detail_output_file)
 
 if __name__ == "__main__":
     main() 
