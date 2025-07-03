@@ -1,0 +1,46 @@
+name: Daily ESP Scraper
+
+on:
+  schedule:
+    - cron: "0 3 * * *"  # Every day at 3AM UTC
+  workflow_dispatch:      # Manual trigger
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    env:
+      PRODUCTS_URL: ${{ secrets.PRODUCTS_URL }}
+      SEARCH_API_URL: ${{ secrets.SEARCH_API_URL }}
+      GOTO_PAGE_API_URL: ${{ secrets.GOTO_PAGE_API_URL }}
+
+      ESP_USERNAME: ${{ secrets.ESP_USERNAME }}
+      ESP_PASSWORD: ${{ secrets.ESP_PASSWORD }}
+      PYTHONPATH: .
+
+    steps:
+      - name: 📥 Checkout repo
+        uses: actions/checkout@v3
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: 🔧 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🚀 Run ESP scraper
+        run: |
+          python -m espscraper --headless
+
+      - name: 🗃 Upload data artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: scraper-data
+          path: |
+            espscraper/data/*.json*
+            log/scraper.log
+            tmp/*
