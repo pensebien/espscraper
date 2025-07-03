@@ -13,7 +13,6 @@ jobs:
       PRODUCTS_URL: ${{ secrets.PRODUCTS_URL }}
       SEARCH_API_URL: ${{ secrets.SEARCH_API_URL }}
       GOTO_PAGE_API_URL: ${{ secrets.GOTO_PAGE_API_URL }}
-
       ESP_USERNAME: ${{ secrets.ESP_USERNAME }}
       ESP_PASSWORD: ${{ secrets.ESP_PASSWORD }}
       PYTHONPATH: .
@@ -37,15 +36,16 @@ jobs:
           python -m espscraper --limit 10 --headless
 
       - name: 📦 Checkout artifacts branch
-        uses: actions/checkout@v4        git config --global url."https://${GITHUB_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+        uses: actions/checkout@v4
         with:
           ref: artifacts
           path: artifacts-branch
 
       - name: 📝 Copy new artifacts
         run: |
-          cp -r espscraper/data/*.json* artifacts-branch/
-          cp -r log/scraper.log artifacts-branch/
+          cp -r espscraper/data/*.json* artifacts-branch/ || true
+          cp -r log/scraper.log artifacts-branch/ || true
+          mkdir -p artifacts-branch/tmp
           cp -r tmp/* artifacts-branch/tmp/ || true
 
       - name: 🚀 Commit and push artifacts
