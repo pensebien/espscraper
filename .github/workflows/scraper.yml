@@ -36,11 +36,26 @@ jobs:
         run: |
           python -m espscraper --limit 10 --headless
 
-      - name: 🗃 Upload data artifacts
-        uses: actions/upload-artifact@v4
+      - name: 📦 Checkout artifacts branch
+        uses: actions/checkout@v4        git config --global url."https://${GITHUB_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
         with:
-          name: scraper-data
-          path: |
-            espscraper/data/*.json*
-            log/scraper.log
-            tmp/*
+          ref: artifacts
+          path: artifacts-branch
+
+      - name: 📝 Copy new artifacts
+        run: |
+          cp -r espscraper/data/*.json* artifacts-branch/
+          cp -r log/scraper.log artifacts-branch/
+          cp -r tmp/* artifacts-branch/tmp/ || true
+
+      - name: 🚀 Commit and push artifacts
+        run: |
+          cd artifacts-branch
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global url."https://${GITHUB_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+          git add .
+          git commit -m "Update artifacts from workflow run $(date)" || echo "No changes to commit"
+          git push origin artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
