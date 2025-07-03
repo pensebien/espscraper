@@ -42,20 +42,27 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: 🚀 Run ESP scraper
-        run: |
-          python -m espscraper --limit 10 --headless
-
       - name: 📦 Checkout artifacts branch
         uses: actions/checkout@v4
         with:
           ref: artifacts
           path: artifacts-branch
 
-      - name: 📝 Copy new artifacts
+      - name: 🔄 Sync artifacts to working directory
         run: |
-          cp -r espscraper/data/*.json* artifacts-branch/ || true
-          cp -r log/scraper.log artifacts-branch/ || true
+          cp -r artifacts-branch/espscraper/data/*.json* espscraper/data/ || true
+          cp -r artifacts-branch/log/scraper.log log/ || true
+          mkdir -p tmp
+          cp -r artifacts-branch/tmp/* tmp/ || true
+
+      - name: 🚀 Run ESP scraper
+        run: |
+          python -m espscraper --limit 10 --headless
+
+      - name: 📝 Copy new artifacts to artifacts branch
+        run: |
+          cp -r espscraper/data/*.json* artifacts-branch/espscraper/data/ || true
+          cp -r log/scraper.log artifacts-branch/log/ || true
           mkdir -p artifacts-branch/tmp
           cp -r tmp/* artifacts-branch/tmp/ || true
 
@@ -70,3 +77,19 @@ jobs:
           git push origin artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📧 Send failure email with log
+        if: always()
+        uses: dawidd6/action-send-mail@v4
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "ESP Scraper Workflow Failed"
+          to: emma.awokoya.work@email.com
+          from: ESP Scraper Bot <emma.awokoya.work@email.com>
+          body: |
+            The ESP Scraper workflow has failed.
+            Please check the logs at ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          attachments: log/scraper.log
