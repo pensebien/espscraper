@@ -87,8 +87,8 @@ jobs:
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
           subject: "ESP Scraper Workflow Failed"
-          to: emma.awokoya.work@email.com
-          from: ESP Scraper Bot <emma.awokoya.work@email.com>
+          to: emma.awokoya.work@gmail.com
+          from: ESP Scraper Bot <emma.awokoya.work@gmail.com>
           body: |
             The ESP Scraper workflow has failed.
             Please check the logs at ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
