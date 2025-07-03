@@ -34,7 +34,7 @@ jobs:
 
       - name: 🚀 Run ESP scraper
         run: |
-          python -m espscraper --headless
+          python -m espscraper --limit 10 --headless
 
       - name: 🗃 Upload data artifacts
         uses: actions/upload-artifact@v3
