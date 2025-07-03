@@ -57,7 +57,7 @@ jobs:
 
       - name: 🚀 Run ESP scraper
         run: |
-          python -m espscraper --limit 10 --headless
+          python -m espscraper --collect-link --limit 10 --headless
 
       - name: 📝 Copy new artifacts to artifacts branch
         run: |
@@ -102,7 +102,7 @@ jobs:
           to: emma.awokoya.work@gmail.com
           from: ESP Scraper Bot <emma.awokoya.work@gmail.com>
           body: |
-            The ESP Scraper workflow has ${{ job.status }}.
+            The ESP Scraper status is a ${{ job.status }}.
 
             Latest products scraped:
             ${{ steps.summary.outputs.summary }}
