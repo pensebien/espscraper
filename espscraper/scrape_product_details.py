@@ -18,6 +18,7 @@ import argparse
 import urllib.parse
 import random
 from dotenv import load_dotenv
+from espscraper.selenium_resilient_manager import SeleniumResilientManager
 
 class ProductDetailScraper(BaseScraper):
     def __init__(self, session_manager, headless=False, limit=None, output_file=None, links_file=None):
@@ -32,39 +33,13 @@ class ProductDetailScraper(BaseScraper):
         self.OUTPUT_FILE = output_file or os.getenv("DETAILS_OUTPUT_FILE", os.path.join(data_dir, "final_product_details.jsonl"))
         self.LINKS_FILE = links_file or os.getenv("DETAILS_LINKS_FILE", os.path.join(data_dir, "api_scraped_links.jsonl"))
         self.limit = limit
-        self.driver = None
         self.headless = headless
-        self.setup_selenium()
+        self.driver_manager = SeleniumResilientManager(headless=self.headless, setup_callback=None)
+        self.driver = self.driver_manager.get_driver()
 
-    def setup_selenium(self):
-        options = Options()
-        # Set a modern user-agent string
-        options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-        # Stealth options to avoid detection
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option('useAutomationExtension', False)
-        if self.headless:
-            options.add_argument("--headless")
-            options.add_argument("--window-size=1920,1080")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-gpu")
-        else:
-            options.add_argument("--start-maximized")
-        self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-        # Remove webdriver property to avoid detection
-        try:
-            self.driver.execute_cdp_cmd(
-                "Page.addScriptToEvaluateOnNewDocument",
-                {
-                    "source": """
-                        Object.defineProperty(navigator, 'webdriver', {get: () => undefined})
-                    """
-                },
-            )
-        except Exception:
-            pass
+    def setup_selenium(self, driver=None):
+        # This method is now only used as a callback if needed for custom setup after driver creation
+        pass
 
     def login(self, force_relogin=False):
         # Use SessionManager to handle login and cookies
@@ -574,12 +549,12 @@ class ProductDetailScraper(BaseScraper):
                     print(f"--- ({i+1}/{len(links_to_process)}) Skipping product with missing URL or ID.")
                     continue
                 print(f"--- ({i+1}/{len(links_to_process)}) Opening Product ID: {product_id} in a new tab...")
-                try:
-                    self.driver.execute_script("window.open();")
-                    new_window = [window for window in self.driver.window_handles if window != original_window][0]
-                    self.driver.switch_to.window(new_window)
-                    self.driver.get(url)
-                    WebDriverWait(self.driver, 30).until(
+                def scrape_action(driver, url=url, product_id=product_id):
+                    driver.execute_script("window.open();")
+                    new_window = [window for window in driver.window_handles if window != original_window][0]
+                    driver.switch_to.window(new_window)
+                    driver.get(url)
+                    WebDriverWait(driver, 30).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, "#productDetailsMain"))
                     )
                     print(f"   ✅ Successfully loaded page for Product ID: {product_id}")
@@ -588,29 +563,111 @@ class ProductDetailScraper(BaseScraper):
                     f_out.write(json.dumps(scraped_data) + '\n')
                     f_out.flush()
                     print(f"   ✅ Scraped: {scraped_data.get('Name', 'N/A')}")
+                    if len(driver.window_handles) > 1:
+                        driver.close()
+                        driver.switch_to.window(original_window)
+                    time.sleep(2)  # Add delay between requests
+                try:
+                    self.driver_manager.resilient_action(scrape_action)
                 except Exception as e:
-                    failure_screenshot = f"failure_product_{product_id}.png"
+                    print(f"❌ FAILED to scrape page for Product ID {product_id}. Error: {e}")
+                    # Try to take a screenshot if possible
                     try:
-                        self.driver.save_screenshot(failure_screenshot)
-                        page_title = self.driver.title
-                        page_url = self.driver.current_url
-                        print(f"   ❌ FAILED to scrape page for Product ID {product_id}. Screenshot saved to {failure_screenshot}")
-                        print(f"      - Page state at failure:")
-                        print(f"      - Title: '{page_title}'")
-                        print(f"      - URL: '{page_url}'")
-                        print(f"      - Expected Product ID in title/URL: {product_id}")
-                        print(f"      - Original Error: {e}")
+                        if self.driver:
+                            self.driver.save_screenshot(f"failure_product_{product_id}.png")
                     except Exception as e2:
-                        print(f"   ❌ FAILED to scrape page for Product ID {product_id} and also FAILED to get debug info. This may indicate a crashed driver.")
-                        print(f"      - Initial Error: {e}")
-                        print(f"      - Debugging Error: {e2}")
-                finally:
-                    if len(self.driver.window_handles) > 1:
-                        self.driver.close()
-                        self.driver.switch_to.window(original_window)
-                    time.sleep(1)
-        self.driver.quit()
+                        print("⚠️ Could not take screenshot, driver may be dead.")
+                    # Log the failed product ID for later retry
+                    try:
+                        with open("failed_products.txt", "a") as fail_log:
+                            fail_log.write(f"{product_id}\n")
+                    except Exception as log_e:
+                        print(f"⚠️ Could not log failed product ID: {log_e}")
+                    # Ensure the driver is fully restarted
+                    try:
+                        self.driver_manager.restart_driver()
+                        time.sleep(3)  # Give system time to release resources
+                        self.driver = self.driver_manager.get_driver()
+                    except Exception as restart_e:
+                        print(f"⚠️ Could not restart driver: {restart_e}")
+                    continue  # Move to the next product
+        self.driver_manager.quit()
         print("✅ Done!")
+
+        # Batch retry logic for failed products
+        max_retries = 2
+        retry_delay = 5
+        for attempt in range(1, max_retries + 1):
+            if not os.path.exists("failed_products.txt"):
+                break
+            with open("failed_products.txt", "r") as f:
+                failed_ids = [line.strip() for line in f if line.strip()]
+            if not failed_ids:
+                break
+            print(f"🔁 Batch retry attempt {attempt} for {len(failed_ids)} failed products...")
+            # Remove the failed_products.txt so we only log new failures
+            os.remove("failed_products.txt")
+            # Re-read product links to get the full info for failed IDs
+            product_links_map = {str(link.get('id')): link for link in product_links}
+            with open(self.OUTPUT_FILE, 'a', encoding='utf-8') as f_out:
+                for product_id in failed_ids:
+                    link_info = product_links_map.get(product_id)
+                    if not link_info:
+                        print(f"⚠️ Could not find link info for failed product ID {product_id}, skipping.")
+                        continue
+                    url = link_info.get('url')
+                    print(f"--- [RETRY {attempt}] Retrying Product ID: {product_id}")
+                    def scrape_action(driver, url=url, product_id=product_id):
+                        driver.execute_script("window.open();")
+                        new_window = [window for window in driver.window_handles if window != original_window][0]
+                        driver.switch_to.window(new_window)
+                        driver.get(url)
+                        WebDriverWait(driver, 30).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "#productDetailsMain"))
+                        )
+                        print(f"   ✅ [RETRY {attempt}] Successfully loaded page for Product ID: {product_id}")
+                        scraped_data = self.scrape_product_detail_page()
+                        scraped_data['SourceURL'] = url
+                        f_out.write(json.dumps(scraped_data) + '\n')
+                        f_out.flush()
+                        print(f"   ✅ [RETRY {attempt}] Scraped: {scraped_data.get('Name', 'N/A')}")
+                        if len(driver.window_handles) > 1:
+                            driver.close()
+                            driver.switch_to.window(original_window)
+                        time.sleep(2)
+                    try:
+                        self.driver_manager.resilient_action(scrape_action)
+                    except Exception as e:
+                        print(f"❌ [RETRY {attempt}] FAILED to scrape page for Product ID {product_id}. Error: {e}")
+                        try:
+                            if self.driver:
+                                self.driver.save_screenshot(f"failure_product_{product_id}_retry{attempt}.png")
+                        except Exception as e2:
+                            print("⚠️ Could not take screenshot, driver may be dead.")
+                        try:
+                            with open("failed_products.txt", "a") as fail_log:
+                                fail_log.write(f"{product_id}\n")
+                        except Exception as log_e:
+                            print(f"⚠️ Could not log failed product ID: {log_e}")
+                        try:
+                            self.driver_manager.restart_driver()
+                            time.sleep(3)
+                            self.driver = self.driver_manager.get_driver()
+                        except Exception as restart_e:
+                            print(f"⚠️ Could not restart driver: {restart_e}")
+                        continue
+            print(f"⏳ Waiting {retry_delay} seconds before next retry batch...")
+            time.sleep(retry_delay)
+        # Final report
+        if os.path.exists("failed_products.txt"):
+            with open("failed_products.txt", "r") as f:
+                still_failed = [line.strip() for line in f if line.strip()]
+            if still_failed:
+                print(f"❌ Could not scrape {len(still_failed)} products after all retries. See failed_products.txt for details.")
+            else:
+                print("✅ All previously failed products were scraped successfully after retries.")
+        else:
+            print("✅ All products scraped successfully, no failures remain.")
 
 def main():
     parser = argparse.ArgumentParser(description="Scrape product data from ESP Web.")

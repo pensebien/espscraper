@@ -1,123 +1,269 @@
 # ESP Product Detail Scraper
 
-A robust, production-ready Python scraper for monitoring and extracting product details from ESP Web.
+A robust, production-ready Python scraper for monitoring and extracting product details from ESP Web. Features intelligent deduplication, checkpointing, batching, and automatic error recovery.
 
-## Quickstart
+## 📁 Project Structure
+
+```
+espscraper-project/
+├── espscraper/                    # Main scraper package
+│   ├── __init__.py               # Package initialization
+│   ├── __main__.py               # CLI entry point
+│   ├── base_scraper.py           # Base scraper class
+│   ├── api_scraper.py            # API-based link collection
+│   ├── scrape_product_details.py # Selenium-based detail scraping
+│   ├── session_manager.py        # Authentication & session management
+│   ├── selenium_resilient_manager.py # Robust Selenium driver management
+│   ├── deduplicator.py           # Link deduplication utility
+│   ├── merger.py                 # Link file merger utility
+│   ├── merger_product_details.py # Product details merger utility
+│   └── data/                     # Data storage directory
+│       ├── api_scraped_links.jsonl           # Collected product links
+│       ├── api_scraped_links.BACKUP.jsonl    # Backup of original links
+│       ├── api_scraped_links.deduped.jsonl   # Deduplicated links
+│       ├── api_scraped_links.checkpoint.txt  # Page checkpoint for resuming
+│       ├── api_scraped_links.meta.json       # API metadata (total pages, etc.)
+│       ├── final_product_details.jsonl       # Scraped product details
+│       ├── final_product_details_merged.jsonl # Merged product details
+│       ├── unified_products.json             # Unified product data
+│       ├── to_scrape.jsonl                   # Links pending scraping
+│       ├── search_response.json              # Sample API response
+│       └── links_checkpoint.txt              # Detail scraping checkpoint
+├── tmp/                          # Temporary session files
+│   ├── session_cookies.json      # Authentication cookies
+│   └── session_state.json        # Session state (pageKey, searchId)
+├── log/                          # Log files
+│   └── scraper.log               # Scraper execution logs
+├── espenv/                       # Python virtual environment
+├── requirements.txt              # Python dependencies
+├── setup.py                      # Package setup
+├── .env                          # Environment variables (create this)
+├── .gitignore                    # Git ignore rules
+├── failed_products.txt           # Failed product IDs for retry
+└── README.md                     # This file
+```
+
+## 🚀 Quickstart
 
 1. **Clone the repo and set up a virtual environment:**
    ```bash
-   python3 -m venv venv
-   source venv/bin/activate
+   python3 -m venv espenv
+   source espenv/bin/activate  # On Windows: espenv\Scripts\activate
    pip install -r requirements.txt
    ```
+
 2. **Configure your `.env` file:**
-   - `ESP_USERNAME` and `ESP_PASSWORD` (required)
-   - `PRODUCTS_URL`, `DETAILS_OUTPUT_FILE`, `DETAILS_LINKS_FILE` (see below)
-   - By default, output, checkpoint, and metadata files are saved in `espscraper/data/`.
-3. **Run the scraper:**
    ```bash
-   python -m espscraper --limit 100 --headless --log-file scraper.log
+   ESP_USERNAME=your_username
+   ESP_PASSWORD=your_password
+   PRODUCTS_URL=https://espweb.asicentral.com/Default.aspx?appCode=WESP&appVersion=4.1.0&page=ProductResults
+   SEARCH_API_URL=https://espweb.asicentral.com/api/SearchProduct
+   GOTO_PAGE_API_URL=https://espweb.asicentral.com/api/GotoPage
+   PRODUCT_URL_TEMPLATE=https://espweb.asicentral.com/Default.aspx?appCode=WESP&appVersion=4.1.0&page=ProductDetails&referrerPage=ProductResults&referrerModule=PRDRES&refModSufx=Generic&PCUrl=1&productID={product_id}&autoLaunchVS=0&tab=list
+   OUTPUT_FILE=espscraper/data/api_scraped_links.jsonl
+   DETAILS_OUTPUT_FILE=espscraper/data/final_product_details.jsonl
+   DETAILS_LINKS_FILE=espscraper/data/api_scraped_links.jsonl
    ```
 
-## CLI Options
+3. **Run the scraper:**
+   ```bash
+   python -m espscraper --collect-links --limit 100 --headless --log-file scraper.log
+   ```
 
-- `--limit N` : Only scrape the first N products in the batch
-- `--headless` : Run Chrome in headless mode
-- `--force-relogin` : Force a new login/session
-- `--output-file` : Output file for scraped details
-- `--links-file` : Input links file (JSONL)
-- `--overwrite-output` : Overwrite output file before scraping (do not resume)
-- `--batch-size` : Number of products to process in this batch
-- `--batch-number` : Batch number (0-based)
-- `--log-file` : Log output to a file
-- `--clear-session` : Clear session/cache before running
+## 🎯 Key Features
 
-## Environment Variables
+### 🔄 **Resume & Recovery**
+- **`--new-only`**: Collect only new product links from the top (pages 1, 2, etc.)
+- **`--resume-missing`**: Resume from checkpoint and continue collecting links from where you left off
+- **Automatic checkpointing**: Saves progress after each page
+- **Session persistence**: Maintains authentication across runs
+- **Failed product retry**: Automatically retries failed products with exponential backoff
 
-- `ESP_USERNAME` (required)
-- `ESP_PASSWORD` (required)
-- `PRODUCTS_URL` (required)
-- `DETAILS_OUTPUT_FILE` (default: `espscraper/data/final_product_details.jsonl`)
-- `DETAILS_LINKS_FILE` (default: `espscraper/data/api_scraped_links.jsonl`)
+### 🛡️ **Robustness & Error Handling**
+- **Selenium crash recovery**: Automatically restarts driver on crashes
+- **Network resilience**: Handles timeouts and connection errors
+- **Batch retry logic**: Retries failed products in batches
+- **Graceful degradation**: Continues scraping even if some products fail
 
-## Batching Example
+### 📊 **Deduplication & Data Management**
+- **In-memory deduplication**: Prevents duplicates during collection
+- **Deduplication utility**: `python espscraper/deduplicator.py` to clean existing files
+- **Consistent key ordering**: Standardizes JSON output format
+- **Merger utilities**: Combine multiple scraped files
 
-To process 500 products per batch (8 batches for 4000 products):
+### ⚡ **Performance & Scalability**
+- **Batching support**: Process products in configurable batches
+- **Concurrent-safe**: Can run multiple instances safely
+- **Memory efficient**: Streams data to files, doesn't load everything in memory
+- **Rate limiting**: Built-in delays to avoid overwhelming the server
+
+## 🖥️ CLI Options
+
+### Main Scraper (`python -m espscraper`)
 ```bash
+# Basic usage
+python -m espscraper --collect-links --limit 100 --headless
+
+# Resume from where you left off
+python -m espscraper --collect-links --resume-missing --headless
+
+# Only collect new products (skip already scraped)
+python -m espscraper --collect-links --new-only --headless
+
+# Process in batches
 python -m espscraper --batch-size 500 --batch-number 0
-python -m espscraper  --batch-size 500 --batch-number 1
-# ... up to batch-number 7
+
+# Force fresh login
+python -m espscraper --force-relogin --headless
+
+# Clear session and start fresh
+python -m espscraper --clear-session --headless
 ```
 
-## Resume & Overwrite
-- By default, the scraper resumes from where it left off (skips already-scraped products).
-- Use `--overwrite-output` to start from scratch.
-
-## Logging
-- Use `--log-file` to log output to a file for cron/production use.
-- If you provide just a filename (e.g., `--log-file scraper.log`), the log will be placed in the `log/` folder by default. The `log` folder is created automatically if it does not exist.
-
-## Temp/Session Files
-- Session/cookie files are stored in `tmp/`.
-- Use `--clear-session` to clear session/cache before running.
-
-## Output, Metadata, and Checkpoint Files
-
-- **Output links file:** Default is `espscraper/data/api_scraped_links.jsonl` (can be changed with `OUTPUT_FILE` or `DETAILS_LINKS_FILE` env var)
-- **Product details output file:** Default is `espscraper/data/final_product_details.jsonl` (can be changed with `DETAILS_OUTPUT_FILE` env var)
-- **Metadata file:** `espscraper/data/api_scraped_links.meta.json` (contains `ResultsPerPage`, `resultsTotal`, and `totalPages`)
-- **Checkpoint file:** `espscraper/data/api_scraped_links.checkpoint.txt` (tracks last completed page for resuming)
-
-All files are created if they do not exist. The scraper is robust to missing files and will use sensible defaults if metadata is missing.
-
-## Dynamic Paging
-
-The scraper automatically determines the number of pages to scrape based on the first search response (`ResultsPerPage` and `resultsTotal`). You do not need to specify the number of pages unless you want to override it with `--pages`.
-
-## Running Only Link Scraper or Product Detail Scraper
-
-You can run each part of the scraper independently:
-
-### 1. Run Only the Link Scraper
-Collect product links and save them to the data folder:
-
+### Link Collection Only (`python -m espscraper.api_scraper`)
 ```bash
-python -m espscraper.api_scraper
+# Collect links with resume support
+python -m espscraper.api_scraper --resume-missing --limit 1000
+
+# Collect only new links
+python -m espscraper.api_scraper --new-only --limit 500
+
+# Force fresh login
+python -m espscraper.api_scraper --force-relogin --limit 200
 ```
 
-**Options:**
-- `--pages N` — Limit the number of pages to scrape
-- `--limit N` — Limit the number of product links to collect
-- `--new-only` — Only collect links for products not already scraped (based on your detail output file)
-
-**Example:**
+### Detail Scraping Only (`python -m espscraper.scrape_product_details`)
 ```bash
-python -m espscraper.api_scraper --limit 50 --new-only
+# Scrape product details
+python -m espscraper.scrape_product_details --headless --limit 100
+
+# Overwrite output file
+python -m espscraper.scrape_product_details --overwrite-output --headless
 ```
 
-### 2. Run Only the Product Detail Scraper
-Read the links file and scrape product details:
+## 🛠️ Utility Scripts
 
+### Deduplication
 ```bash
-python -m espscraper
+# Deduplicate links file with consistent key ordering
+python espscraper/deduplicator.py
 ```
 
-**Options:**
-- `--limit N` — Limit the number of product details to scrape
-- `--headless` — Run the browser in headless mode
-- `--log-file mylog.log` — Save logs to a file
-
-**Example:**
+### Merging
 ```bash
-python -m espscraper --limit 50 --headless --log-file details.log
+# Merge link files
+python espscraper/merger.py --api-links-file new_links.jsonl
+
+# Merge product detail files
+python espscraper/merger_product_details.py --existing existing.jsonl --new new.jsonl --output merged.jsonl
 ```
 
-### 3. Run Both in Sequence
-To run both link collection and detail scraping in one command:
+## 📈 Advanced Usage Examples
 
+### 1. **Continuous Monitoring (Catch New Products)**
 ```bash
-python -m espscraper --collect-links --limit 50 --new-only --headless
+# Run daily to catch new products added to the top
+python -m espscraper --collect-links --new-only --headless --log-file daily.log
 ```
 
-## License
-MIT 
+### 2. **Fill Missing Gaps**
+```bash
+# Resume from where you left off to fill any gaps
+python -m espscraper --collect-links --resume-missing --headless --log-file resume.log
+```
+
+### 3. **Large-Scale Processing**
+```bash
+# Process 10,000 products in batches of 500
+for i in {0..19}; do
+    python -m espscraper --batch-size 500 --batch-number $i --headless --log-file batch_$i.log
+done
+```
+
+### 4. **Production Setup with Cron**
+```bash
+# Add to crontab for daily monitoring
+0 2 * * * cd /path/to/espscraper-project && source espenv/bin/activate && python -m espscraper --collect-links --new-only --headless --log-file /var/log/esp_scraper.log
+```
+
+## 📊 Data Files Explained
+
+### **Link Collection Files**
+- `api_scraped_links.jsonl`: Main product links file (JSONL format)
+- `api_scraped_links.checkpoint.txt`: Last completed page number
+- `api_scraped_links.meta.json`: API metadata (total products, pages, etc.)
+- `api_scraped_links.BACKUP.jsonl`: Backup before deduplication
+
+### **Product Detail Files**
+- `final_product_details.jsonl`: Scraped product details
+- `failed_products.txt`: Product IDs that failed to scrape (for retry)
+
+### **Session Files**
+- `tmp/session_cookies.json`: Authentication cookies
+- `tmp/session_state.json`: Session state (pageKey, searchId)
+
+## 🔧 Environment Variables
+
+| Variable               | Required | Description                                                                  |
+| ---------------------- | -------- | ---------------------------------------------------------------------------- |
+| `ESP_USERNAME`         | ✅        | Your ESP username                                                            |
+| `ESP_PASSWORD`         | ✅        | Your ESP password                                                            |
+| `PRODUCTS_URL`         | ✅        | ESP products page URL                                                        |
+| `SEARCH_API_URL`       | ✅        | ESP search API endpoint                                                      |
+| `GOTO_PAGE_API_URL`    | ✅        | ESP pagination API endpoint                                                  |
+| `PRODUCT_URL_TEMPLATE` | ✅        | Product detail URL template                                                  |
+| `OUTPUT_FILE`          | ❌        | Link output file (default: `espscraper/data/api_scraped_links.jsonl`)        |
+| `DETAILS_OUTPUT_FILE`  | ❌        | Details output file (default: `espscraper/data/final_product_details.jsonl`) |
+| `DETAILS_LINKS_FILE`   | ❌        | Input links file (default: `espscraper/data/api_scraped_links.jsonl`)        |
+
+## 🐛 Troubleshooting
+
+### **Common Issues**
+
+1. **Authentication Errors**
+   ```bash
+   # Clear session and force relogin
+   python -m espscraper --clear-session --force-relogin --headless
+   ```
+
+2. **Driver Crashes**
+   - The scraper automatically restarts the driver
+   - Check `failed_products.txt` for products that need manual retry
+
+3. **Duplicate Products**
+   ```bash
+   # Run deduplicator to clean up
+   python espscraper/deduplicator.py
+   ```
+
+4. **Memory Issues**
+   - Use `--limit` to process smaller batches
+   - Use `--batch-size` and `--batch-number` for large datasets
+
+### **Log Analysis**
+```bash
+# Check for errors
+grep "ERROR\|FAILED\|❌" log/scraper.log
+
+# Check progress
+grep "✅ Page.*complete" log/scraper.log
+
+# Check authentication
+grep "login\|session" log/scraper.log
+```
+
+## 📝 License
+MIT License - see LICENSE file for details.
+
+## 🤝 Contributing
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+## 📞 Support
+For issues and questions:
+1. Check the troubleshooting section
+2. Review the logs in `log/` directory
+3. Open an issue with detailed error information 

@@ -67,10 +67,12 @@ class ApiScraper(BaseScraper):
                 })
         return products
 
-    def collect_product_links(self, force_relogin=False, pages=None, limit=None, new_only=False, detail_output_file=None):
+    def collect_product_links(self, force_relogin=False, pages=None, limit=None, new_only=False, detail_output_file=None, resume_missing=False):
         import os
         checkpoint_file = self.OUTPUT_FILE.replace('.jsonl', '.checkpoint.txt')
         metadata_file = self.OUTPUT_FILE.replace('.jsonl', '.meta.json')
+        batch_size = 5  # Number of pages to fetch per batch
+        delay = 1  # seconds between page requests
         # Load already-scraped product IDs if new_only is set
         already_scraped_ids = set()
         if new_only and detail_output_file and os.path.exists(detail_output_file):
@@ -84,17 +86,19 @@ class ApiScraper(BaseScraper):
                     except Exception:
                         continue
             print(f"🔎 Loaded {len(already_scraped_ids)} already-scraped product IDs from {detail_output_file}")
-        # Determine where to start
-        if os.path.exists(checkpoint_file):
-            with open(checkpoint_file, 'r') as f:
-                try:
-                    last_page = int(f.read().strip())
-                    start_page = last_page + 1
-                    print(f"🔄 Resuming from page {start_page} (last completed: {last_page})")
-                except Exception:
-                    start_page = 2
-        else:
-            start_page = 2
+        # Load all collected IDs from output file (for deduplication)
+        collected_ids = set()
+        if os.path.exists(self.OUTPUT_FILE):
+            with open(self.OUTPUT_FILE, 'r') as f:
+                for line in f:
+                    try:
+                        data = json.loads(line)
+                        pid = data.get('id') or data.get('productId') or data.get('ProductID')
+                        if pid:
+                            collected_ids.add(str(pid))
+                    except Exception:
+                        continue
+        # Always fetch first page for session and ResultsTotal
         def get_session_and_ids():
             cookies, page_key, search_id = self.session_manager.load_state()
             session = requests.Session()
@@ -120,11 +124,7 @@ class ApiScraper(BaseScraper):
             "searchState": "",
             "stats": ""
         }
-        all_products = []
-        results_per_page = 22
-        results_total = 0
-        total_pages_dynamic = self.TOTAL_PAGES_TO_SCRAPE
-        # Try first API call with saved session
+        # Fetch first page for ResultsTotal and ResultsPerPage
         try:
             response = session.post(self.SEARCH_API_URL, json=search_payload, timeout=30)
             if response.status_code in (401, 403):
@@ -144,6 +144,7 @@ class ApiScraper(BaseScraper):
                 total_pages_dynamic = math.ceil(results_total / results_per_page) if results_per_page else 1
             except Exception:
                 total_pages_dynamic = self.TOTAL_PAGES_TO_SCRAPE
+            # Update metadata file with latest resultsTotal
             try:
                 with open(metadata_file, 'w') as meta_f:
                     json.dump({
@@ -153,24 +154,6 @@ class ApiScraper(BaseScraper):
                     }, meta_f, indent=2)
             except Exception as meta_e:
                 print(f"⚠️ Could not write metadata file: {meta_e}")
-            # Write first page links if resuming from start
-            if start_page == 2:
-                all_products = self.extract_products_from_json(initial_data)
-                if limit is not None:
-                    all_products = all_products[:limit]
-                try:
-                    with open(self.OUTPUT_FILE, 'a') as f_out:
-                        for product in all_products:
-                            f_out.write(json.dumps(product) + '\n')
-                except Exception as f_e:
-                    print(f"⚠️ Could not write to output file: {f_e}")
-                try:
-                    with open(checkpoint_file, 'w') as f:
-                        f.write('1')
-                except Exception as c_e:
-                    print(f"⚠️ Could not write checkpoint file: {c_e}")
-            else:
-                all_products = self.extract_products_from_json(initial_data)
         except Exception as e:
             print(f"⚠️ Saved session failed or expired: {e}. Launching Selenium login...")
             page_key, search_id = self.session_manager.selenium_login_and_get_session_data(
@@ -187,13 +170,12 @@ class ApiScraper(BaseScraper):
                 response.raise_for_status()
                 initial_data = response.json()
                 print("🔎 First page API response:")
-                print(json.dumps(initial_data, indent=2))
                 search_state_str = initial_data.get('d', {}).get('SearchState')
                 if not search_state_str:
                     print("❌ Could not extract SearchState from initial response. Aborting.")
                     return
                 results_per_page = initial_data['d'].get('ResultsPerPage', 22)
-                results_total = initial_data['d'].get('resultsTotal', 0)
+                results_total = initial_data['d'].get('ResultsTotal', 0)
                 if results_total:
                     print(f"📊 Total products available: {results_total}")
                 else:
@@ -202,6 +184,7 @@ class ApiScraper(BaseScraper):
                     total_pages_dynamic = math.ceil(results_total / results_per_page) if results_per_page else 1
                 except Exception:
                     total_pages_dynamic = self.TOTAL_PAGES_TO_SCRAPE
+                # Update metadata file with latest resultsTotal
                 try:
                     with open(metadata_file, 'w') as meta_f:
                         json.dump({
@@ -211,40 +194,11 @@ class ApiScraper(BaseScraper):
                         }, meta_f, indent=2)
                 except Exception as meta_e:
                     print(f"⚠️ Could not write metadata file: {meta_e}")
-                if start_page == 2:
-                    all_products = self.extract_products_from_json(initial_data)
-                    if limit is not None:
-                        all_products = all_products[:limit]
-                    try:
-                        with open(self.OUTPUT_FILE, 'a') as f_out:
-                            for product in all_products:
-                                f_out.write(json.dumps(product) + '\n')
-                    except Exception as f_e:
-                        print(f"⚠️ Could not write to output file: {f_e}")
-                    try:
-                        with open(checkpoint_file, 'w') as f:
-                            f.write('1')
-                    except Exception as c_e:
-                        print(f"⚠️ Could not write checkpoint file: {c_e}")
-                else:
-                    all_products = self.extract_products_from_json(initial_data)
             except Exception as e2:
                 print(f"❌ Initial SearchProduct request failed after login: {e2}")
                 return
-        # Use dynamic total_pages unless user overrides with --pages
-        if limit is not None:
-            total_pages = math.ceil(limit / results_per_page)
-        else:
-            total_pages = pages if pages is not None else total_pages_dynamic
-        products_collected = len(all_products)
-        new_links_collected = 0
-        for page_num in range(start_page, total_pages + 1):
-            if results_total:
-                print(f"➡️  Fetching page {page_num}/{total_pages} (Total products: {results_total})")
-            else:
-                print(f"➡️  Fetching page {page_num}/{total_pages}")
-            if limit is not None and products_collected >= limit:
-                break
+        # Helper function to fetch and write new links for a page
+        def fetch_and_write_page(page_num, total_pages, results_total):
             goto_payload = {
                 "page": page_num, "adApplicationCode": "ESPO", "appCode": "WESP", "appVersion": "4.1.0",
                 "extraParams": f"SearchId={search_id}", "pageKey": page_key, "searchState": search_state_str,
@@ -256,30 +210,107 @@ class ApiScraper(BaseScraper):
                 page_data = response.json()
                 new_products = self.extract_products_from_json(page_data)
                 if not new_products:
-                    break
-                if limit is not None:
-                    remaining = limit - products_collected
-                    new_products = new_products[:remaining]
+                    return 0
+                page_new_links = 0
                 for product in new_products:
                     pid = product.get('productId') or product.get('ProductID')
                     if new_only and pid and str(pid) in already_scraped_ids:
                         continue  # skip already scraped
+                    if pid and str(pid) in collected_ids:
+                        continue  # skip already collected in output file
                     with open(self.OUTPUT_FILE, 'a') as f_out:
                         f_out.write(json.dumps(product) + '\n')
-                    products_collected += 1
-                    new_links_collected += 1
-                    if limit and new_links_collected >= limit:
-                        break
-                with open(checkpoint_file, 'w') as f:
-                    f.write(str(page_num))
-                print(f"✅ Page {page_num} complete. {len(new_products)} products written. Total collected: {products_collected}")
-                time.sleep(1)
+                    collected_ids.add(str(pid))
+                    page_new_links += 1
+                print(f"✅ Page {page_num} complete. {page_new_links} new products written. Total collected: {len(collected_ids)}/{results_total}")
+                return page_new_links
             except Exception as e:
                 print(f"❌ Request for page {page_num} failed: {e}")
-                break
-        print(f"✅ Link collection complete up to page {page_num if 'page_num' in locals() else 1}.")
-        print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
-        print(f"✅ Collected {new_links_collected} new product links.")
+                return 0
+        # Main collection logic
+        new_links_collected = 0
+        pages_processed = set()
+        total_pages = total_pages_dynamic
+        if resume_missing:
+            # Resume from checkpoint page + 1
+            if os.path.exists(checkpoint_file):
+                with open(checkpoint_file, 'r') as f:
+                    try:
+                        last_page = int(f.read().strip())
+                        start_page = last_page + 1
+                        print(f"🔄 Resuming from page {start_page} (last completed: {last_page}) [RESUME-MISSING MODE]")
+                    except Exception:
+                        start_page = 1
+            else:
+                start_page = 1
+            current_page = start_page
+            while new_links_collected < (limit if limit is not None else results_total) and current_page <= total_pages:
+                batch_end = min(current_page + batch_size, total_pages + 1)
+                for page_num in range(current_page, batch_end):
+                    if page_num in pages_processed:
+                        continue
+                    pages_processed.add(page_num)
+                    page_new_links = fetch_and_write_page(page_num, total_pages, results_total)
+                    new_links_collected += page_new_links
+                    time.sleep(delay)
+                    # Save checkpoint after each page
+                    with open(checkpoint_file, 'w') as f:
+                        f.write(str(page_num))
+                    if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
+                        print(f"⚠️ Limit of {limit} reached, or all products collected.")
+                        print(f"✅ Link collection complete up to page {page_num}.")
+                        print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+                        print(f"✅ Collected {new_links_collected} new product links.")
+                        return {'all_links_collected': False, 'new_links_collected': new_links_collected}
+                current_page = batch_end
+            print(f"✅ Link collection complete up to page {current_page-1}.")
+            print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+            print(f"✅ Collected {new_links_collected} new product links.")
+            return {'all_links_collected': False, 'new_links_collected': new_links_collected}
+        else:
+            # Default to new-only mode (fetch from top)
+            for page_num in [1, 2]:
+                if page_num > total_pages:
+                    break
+                if page_num in pages_processed:
+                    continue
+                pages_processed.add(page_num)
+                page_new_links = fetch_and_write_page(page_num, total_pages, results_total)
+                new_links_collected += page_new_links
+                time.sleep(delay)
+                # Save checkpoint after each page
+                with open(checkpoint_file, 'w') as f:
+                    f.write(str(page_num))
+                if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
+                    print(f"⚠️ Limit of {limit} reached, or all products collected.")
+                    print(f"✅ Link collection complete up to page {page_num}.")
+                    print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+                    print(f"✅ Collected {new_links_collected} new product links.")
+                    return {'all_links_collected': False, 'new_links_collected': new_links_collected}
+            current_page = 3
+            while new_links_collected < (limit if limit is not None else results_total) and current_page <= total_pages:
+                batch_end = min(current_page + batch_size, total_pages + 1)
+                for page_num in range(current_page, batch_end):
+                    if page_num in pages_processed:
+                        continue
+                    pages_processed.add(page_num)
+                    page_new_links = fetch_and_write_page(page_num, total_pages, results_total)
+                    new_links_collected += page_new_links
+                    time.sleep(delay)
+                    # Save checkpoint after each page
+                    with open(checkpoint_file, 'w') as f:
+                        f.write(str(page_num))
+                    if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
+                        print(f"⚠️ Limit of {limit} reached, or all products collected.")
+                        print(f"✅ Link collection complete up to page {page_num}.")
+                        print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+                        print(f"✅ Collected {new_links_collected} new product links.")
+                        return {'all_links_collected': False, 'new_links_collected': new_links_collected}
+                current_page = batch_end
+            print(f"✅ Link collection complete up to page {current_page-1}.")
+            print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+            print(f"✅ Collected {new_links_collected} new product links.")
+            return {'all_links_collected': False, 'new_links_collected': new_links_collected}
 
 def get_authenticated_session_data(driver):
     """
@@ -377,25 +408,6 @@ def get_authenticated_cookies():
         driver.quit()
         print("🤖 Selenium browser closed.")
 
-def create_payload_template_if_not_exists():
-    """Creates a template for the JSON payload if it doesn't exist."""
-    if not os.path.exists(PAYLOAD_TEMPLATE_FILE):
-        print(f"📄 Creating '{PAYLOAD_TEMPLATE_FILE}'...")
-        template = {
-          "page": 1,
-          "adApplicationCode": "ESPO",
-          "appCode": "WESP",
-          "appVersion": "4.1.0",
-          "extraParams": "SearchId=782072784",
-          "pageKey": "SK-7c4c2a78-93da-438d-a0de-58b983ce41fd",
-          "searchState": "{\"SelectedDimensions\":[{\"ID\":\"74\",\"DimensionInput\":\"asi\",\"Dimension\":\"SuppAsiNo\",\"Name\":\"61125\",\"Value\":null,\"Count\":null,\"ImageId\":null,\"MultiSelect\":false,\"Delimiter\":\"^\",\"ReturnAll\":false}],\"PriceType\":0,\"From\":null,\"To\":null,\"Quantity\":null,\"SearchAnyTerms\":null,\"SearchNotTerms\":null,\"SearchPhrase\":null,\"SearchTerms\":null,\"SearchSeqNo\":5,\"Page\":1,\"RecordOffset\":0,\"UniqueID\":\"a5373f10-9a9b-48b3-b223-9969baf6c4d0\",\"SearchId\":832780353,\"IsNewSearch\":false,\"PV\":null,\"PVSelection\":[],\"MarketSegment\":\"USAALL\",\"ProductionTime\":null,\"IncludeRushTime\":false,\"ProductNo\":null,\"ProductList\":null,\"AsiNoList\":null,\"CanadianSuppliers\":false,\"VideoId\":0,\"UiSearchMode\":\"Quick\"}",
-          "stats": "tab=list,moduleCode=PRDRES,moduleVersion=5.0.0,moduleVersionId=499,appId=11621,moduleInstance=271774,pageId=128755,referrerModule=,refModSufx=,appVersion=4.1.0,page=ProductResults,referrerPage=ESPHomepage,refPgId=128757"
-        }
-        with open(PAYLOAD_TEMPLATE_FILE, 'w') as f:
-            json.dump(template, f, indent=2)
-    else:
-        print(f"📄 Using existing '{PAYLOAD_TEMPLATE_FILE}'.")
-
 def extract_links_from_html(html_content):
     """Parses HTML to find product links and update dates."""
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -436,12 +448,24 @@ def main():
     parser.add_argument('--pages', type=int, default=None, help='Number of pages to scrape')
     parser.add_argument('--force-relogin', action='store_true', help='Force a fresh Selenium login')
     parser.add_argument('--limit', type=int, default=None, help='Number of product links to collect (not pages)')
-    parser.add_argument('--new-only', action='store_true', help='Collect only new product links')
+    parser.add_argument('--new-only', action='store_true', help='Collect only new product links from the top (pages 1, 2, etc.)')
+    parser.add_argument('--resume-missing', action='store_true', help='Resume from checkpoint and continue collecting links from where you left off')
     parser.add_argument('--detail-output-file', help='File containing already scraped product IDs')
     args = parser.parse_args()
     session_manager = SessionManager()
     scraper = ApiScraper(session_manager)
-    scraper.collect_product_links(force_relogin=args.force_relogin, pages=args.pages, limit=args.limit, new_only=args.new_only, detail_output_file=args.detail_output_file)
+    status = scraper.collect_product_links(
+        force_relogin=args.force_relogin,
+        pages=args.pages,
+        limit=args.limit,
+        new_only=args.new_only,
+        detail_output_file=args.detail_output_file,
+        resume_missing=args.resume_missing
+    )
+    if status and status.get('all_links_collected'):
+        print("All links already collected. You may proceed to detail scraping.")
+    elif status:
+        print(f"New links collected: {status.get('new_links_collected', 0)}")
 
 if __name__ == "__main__":
     main() 

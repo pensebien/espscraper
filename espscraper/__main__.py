@@ -59,7 +59,11 @@ def main():
             from espscraper.api_scraper import ApiScraper
             session_manager = SessionManager()
             scraper = ApiScraper(session_manager)
-            scraper.collect_product_links(force_relogin=args.force_relogin, limit=args.limit, new_only=args.new_only, detail_output_file=args.output_file)
+            status = scraper.collect_product_links(force_relogin=args.force_relogin, limit=args.limit, new_only=args.new_only, detail_output_file=args.output_file)
+            if status and status.get('all_links_collected'):
+                logging.info("All links already collected. Proceeding to detail scraping.")
+            elif status:
+                logging.info(f"New links collected: {status.get('new_links_collected', 0)}")
         if args.overwrite_output:
             output_file = args.output_file or os.getenv("DETAILS_OUTPUT_FILE", "final_product_details.jsonl")
             open(output_file, 'w').close()  # Truncate the file
