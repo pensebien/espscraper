@@ -19,6 +19,7 @@ import urllib.parse
 import random
 from dotenv import load_dotenv
 from espscraper.selenium_resilient_manager import SeleniumResilientManager
+import requests
 
 class ProductDetailScraper(BaseScraper):
     def __init__(self, session_manager, headless=False, limit=None, output_file=None, links_file=None):
@@ -68,6 +69,43 @@ class ProductDetailScraper(BaseScraper):
         else:
             print(f"❌ ERROR: Links file not found at {self.LINKS_FILE}")
         return links
+
+    def get_related_products(self, product_id, soup=None):
+        """Try API first, fallback to HTML only if API fails or is empty. Never print errors, always return a list."""
+        api_url = f"https://api.asicentral.com/v1/products/{product_id}/suggestions.json?page=1&rpp=5"
+        try:
+            resp = requests.get(api_url, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                related = []
+                for item in data.get('Results', []):
+                    pid = item.get('Id')
+                    name = item.get('Name')
+                    image = item.get('ImageUrl')
+                    if image and not image.startswith('http'):
+                        image = f"https://api.asicentral.com/v1/{image.lstrip('/')}"
+                    url = self.build_product_url(pid) if pid else ''
+                    related.append({'Name': name, 'URL': url, 'Image': image})
+                if related:
+                    return related
+        except Exception:
+            pass
+        # Only try HTML if API failed or returned no results
+        related = []
+        if soup:
+            for item in soup.find_all('div', class_=re.compile(r'product-list-item')):
+                name_tag = item.select_one('.prod-name a')
+                name = name_tag.text.strip() if name_tag else 'N/A'
+                img_tag = item.select_one('.prod-img-inner img')
+                image = img_tag['src'] if img_tag and img_tag.has_attr('src') else ''
+                pid_match = re.search(r'/([0-9]+)(?:\?|$)', image)
+                pid = pid_match.group(1) if pid_match else None
+                url = self.build_product_url(pid) if pid else ''
+                related.append({'Name': name, 'URL': url, 'Image': image})
+        return related
+
+    def build_product_url(self, product_id):
+        return f"https://espweb.asicentral.com/Default.aspx?appCode=WESP&appVersion=4.1.0&page=ProductDetails&productID={product_id}&autoLaunchVS=0&tab=list"
 
     def scrape_product_detail_page(self):
         """
@@ -329,15 +367,6 @@ class ProductDetailScraper(BaseScraper):
             except:
                 pass
 
-            # --- Related Products ---
-            try:
-                related_section = detail_soup.select_one('#pnlRelatedProducts')
-                if related_section:
-                    for link in related_section.find_all('a', href=True):
-                        related_products.append(link['href'])
-            except:
-                pass
-
             # --- ProductCPN ---
             product_cpn = None
             try:
@@ -382,6 +411,13 @@ class ProductDetailScraper(BaseScraper):
 
             # --- Pricing Table (now with better error handling) ---
             pricing_table = self.extract_pricing_table()
+
+            # --- Related Products (API first, fallback to HTML) ---
+            if product_id:
+                try:
+                    related_products = self.get_related_products(product_id, soup=detail_soup)
+                except Exception as e:
+                    print(f"[RelatedProduct] Error: {e}")
 
             # Get current URL
             current_url = self.driver.current_url
@@ -605,12 +641,16 @@ class ProductDetailScraper(BaseScraper):
             if not failed_ids:
                 break
             print(f"🔁 Batch retry attempt {attempt} for {len(failed_ids)} failed products...")
-            # Remove the failed_products.txt so we only log new failures
-            os.remove("failed_products.txt")
+            os.remove("failed_products.txt")  # Remove so we only log new failures
             # Re-read product links to get the full info for failed IDs
             product_links_map = {str(link.get('id')): link for link in product_links}
+            scraped_ids = self.get_scraped_ids()  # Refresh scraped IDs before each retry batch
+            still_failed = []  # Track products that still fail
             with open(self.OUTPUT_FILE, 'a', encoding='utf-8') as f_out:
                 for product_id in failed_ids:
+                    if product_id in scraped_ids:
+                        print(f"⚠️ Product ID {product_id} already scraped, skipping retry and removing from failed list.")
+                        continue
                     link_info = product_links_map.get(product_id)
                     if not link_info:
                         print(f"⚠️ Could not find link info for failed product ID {product_id}, skipping.")
@@ -644,30 +684,15 @@ class ProductDetailScraper(BaseScraper):
                                 self.driver.save_screenshot(f"failure_product_{product_id}_retry{attempt}.png")
                         except Exception as e2:
                             print("⚠️ Could not take screenshot, driver may be dead.")
-                        try:
-                            with open("failed_products.txt", "a") as fail_log:
-                                fail_log.write(f"{product_id}\n")
-                        except Exception as log_e:
-                            print(f"⚠️ Could not log failed product ID: {log_e}")
-                        try:
-                            self.driver_manager.restart_driver()
-                            time.sleep(3)
-                            self.driver = self.driver_manager.get_driver()
-                        except Exception as restart_e:
-                            print(f"⚠️ Could not restart driver: {restart_e}")
+                        still_failed.append(product_id)
                         continue
+            # After the batch, write only still-failed IDs back to failed_products.txt
+            if still_failed:
+                with open("failed_products.txt", "w") as fail_log:
+                    for pid in still_failed:
+                        fail_log.write(f"{pid}\n")
             print(f"⏳ Waiting {retry_delay} seconds before next retry batch...")
             time.sleep(retry_delay)
-        # Final report
-        if os.path.exists("failed_products.txt"):
-            with open("failed_products.txt", "r") as f:
-                still_failed = [line.strip() for line in f if line.strip()]
-            if still_failed:
-                print(f"❌ Could not scrape {len(still_failed)} products after all retries. See failed_products.txt for details.")
-            else:
-                print("✅ All previously failed products were scraped successfully after retries.")
-        else:
-            print("✅ All products scraped successfully, no failures remain.")
 
 def main():
     parser = argparse.ArgumentParser(description="Scrape product data from ESP Web.")
