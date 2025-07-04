@@ -19,6 +19,7 @@ def main():
     parser.add_argument('--log-file', type=str, default=None)
     parser.add_argument('--clear-session', action='store_true', help='Clear session/cache before running')
     parser.add_argument('--new-only', action='store_true', help='Only collect links for products not already scraped (based on the detail output file)')
+    parser.add_argument('--no-aggressive-cleanup', action='store_true', help='Disable aggressive Chrome process cleanup (keeps your browser windows open)')
     args = parser.parse_args()
 
     # Ensure log directory exists if log-file is specified
@@ -77,7 +78,8 @@ def main():
             headless=args.headless,
             limit=args.limit,
             output_file=args.output_file,
-            links_file=args.links_file
+            links_file=args.links_file,
+            aggressive_cleanup=not args.no_aggressive_cleanup
         )
         # Batching logic
         if args.batch_size is not None and args.batch_number is not None:

@@ -22,7 +22,7 @@ from espscraper.selenium_resilient_manager import SeleniumResilientManager
 import requests
 
 class ProductDetailScraper(BaseScraper):
-    def __init__(self, session_manager, headless=False, limit=None, output_file=None, links_file=None):
+    def __init__(self, session_manager, headless=False, limit=None, output_file=None, links_file=None, aggressive_cleanup=True):
         super().__init__(session_manager)
         self.load_env()
         self.USERNAME = os.getenv("ESP_USERNAME")
@@ -35,7 +35,11 @@ class ProductDetailScraper(BaseScraper):
         self.LINKS_FILE = links_file or os.getenv("DETAILS_LINKS_FILE", os.path.join(data_dir, "api_scraped_links.jsonl"))
         self.limit = limit
         self.headless = headless
-        self.driver_manager = SeleniumResilientManager(headless=self.headless, setup_callback=None)
+        self.driver_manager = SeleniumResilientManager(
+            headless=self.headless, 
+            setup_callback=None,
+            aggressive_cleanup=aggressive_cleanup
+        )
         self.driver = self.driver_manager.get_driver()
 
     def setup_selenium(self, driver=None):
@@ -43,21 +47,29 @@ class ProductDetailScraper(BaseScraper):
         pass
 
     def login(self, force_relogin=False):
-        # Use SessionManager to handle login and cookies
+        # Use SessionManager to handle login and cookies, passing the existing driver
         self.session_manager.selenium_login_and_get_session_data(
-            self.USERNAME, self.PASSWORD, self.PRODUCTS_URL, force_relogin=force_relogin
+            self.USERNAME, self.PASSWORD, self.PRODUCTS_URL, force_relogin=force_relogin, driver=self.driver
         )
         # Load cookies into Selenium driver
         cookies, _, _ = self.session_manager.load_state()
         if cookies:
-            self.driver.get(self.PRODUCTS_URL)
-            for cookie in cookies:
-                cookie_dict = {k: v for k, v in cookie.items() if k in ['name', 'value', 'domain', 'path', 'expiry', 'secure', 'httpOnly']}
-                try:
-                    self.driver.add_cookie(cookie_dict)
-                except Exception:
-                    pass
-            self.driver.refresh()
+            try:
+                self.driver.get(self.PRODUCTS_URL)
+                for cookie in cookies:
+                    cookie_dict = {k: v for k, v in cookie.items() if k in ['name', 'value', 'domain', 'path', 'expiry', 'secure', 'httpOnly']}
+                    try:
+                        self.driver.add_cookie(cookie_dict)
+                    except Exception:
+                        pass
+                # Use resilient action for refresh to handle timeouts
+                def refresh_action(driver):
+                    driver.refresh()
+                    return True
+                self.driver_manager.resilient_action(refresh_action)
+            except Exception as e:
+                print(f"⚠️ Warning: Could not refresh page after loading cookies: {e}")
+                # Continue anyway, the session might still be valid
 
     def read_product_links(self):
         links = []
@@ -607,25 +619,46 @@ class ProductDetailScraper(BaseScraper):
                     self.driver_manager.resilient_action(scrape_action)
                 except Exception as e:
                     print(f"❌ FAILED to scrape page for Product ID {product_id}. Error: {e}")
+                    
+                    # Enhanced error handling and recovery
+                    error_type = type(e).__name__
+                    error_msg = str(e)
+                    
+                    # Handle specific connection errors more aggressively
+                    if "Connection refused" in error_msg or "Failed to establish a new connection" in error_msg:
+                        print("🔧 Connection refused detected - performing aggressive cleanup...")
+                        try:
+                            # Force restart the driver manager completely
+                            self.driver_manager.quit()
+                            time.sleep(5)  # Longer wait for connection issues
+                            self.driver_manager = SeleniumResilientManager(
+                                headless=self.headless, 
+                                setup_callback=None,
+                                max_retries=3,
+                                connection_timeout=45  # Increase timeout for recovery
+                            )
+                            self.driver = self.driver_manager.get_driver()
+                            # Re-login if needed
+                            self.login(force_relogin=False)
+                        except Exception as restart_e:
+                            print(f"⚠️ Could not restart driver manager: {restart_e}")
+                    
                     # Try to take a screenshot if possible
                     try:
-                        if self.driver:
+                        if self.driver and self.driver_manager._is_driver_alive():
                             self.driver.save_screenshot(f"failure_product_{product_id}.png")
                     except Exception as e2:
                         print("⚠️ Could not take screenshot, driver may be dead.")
+                    
                     # Log the failed product ID for later retry
                     try:
                         with open("failed_products.txt", "a") as fail_log:
                             fail_log.write(f"{product_id}\n")
                     except Exception as log_e:
                         print(f"⚠️ Could not log failed product ID: {log_e}")
-                    # Ensure the driver is fully restarted
-                    try:
-                        self.driver_manager.restart_driver()
-                        time.sleep(3)  # Give system time to release resources
-                        self.driver = self.driver_manager.get_driver()
-                    except Exception as restart_e:
-                        print(f"⚠️ Could not restart driver: {restart_e}")
+                    
+                    # Add delay before continuing to next product
+                    time.sleep(5)  # Longer delay after failures
                     continue  # Move to the next product
         self.driver_manager.quit()
         print("✅ Done!")
@@ -679,12 +712,32 @@ class ProductDetailScraper(BaseScraper):
                         self.driver_manager.resilient_action(scrape_action)
                     except Exception as e:
                         print(f"❌ [RETRY {attempt}] FAILED to scrape page for Product ID {product_id}. Error: {e}")
+                        
+                        # Enhanced error handling for retry attempts
+                        error_msg = str(e)
+                        if "Connection refused" in error_msg or "Failed to establish a new connection" in error_msg:
+                            print(f"🔧 [RETRY {attempt}] Connection refused - performing aggressive cleanup...")
+                            try:
+                                self.driver_manager.quit()
+                                time.sleep(5)
+                                self.driver_manager = SeleniumResilientManager(
+                                    headless=self.headless, 
+                                    setup_callback=None,
+                                    max_retries=3,
+                                    connection_timeout=45
+                                )
+                                self.driver = self.driver_manager.get_driver()
+                                self.login(force_relogin=False)
+                            except Exception as restart_e:
+                                print(f"⚠️ [RETRY {attempt}] Could not restart driver manager: {restart_e}")
+                        
                         try:
-                            if self.driver:
+                            if self.driver and self.driver_manager._is_driver_alive():
                                 self.driver.save_screenshot(f"failure_product_{product_id}_retry{attempt}.png")
                         except Exception as e2:
                             print("⚠️ Could not take screenshot, driver may be dead.")
                         still_failed.append(product_id)
+                        time.sleep(3)  # Delay between retry failures
                         continue
             # After the batch, write only still-failed IDs back to failed_products.txt
             if still_failed:
@@ -704,6 +757,7 @@ def main():
     parser.add_argument('--overwrite-output', action='store_true', help='Overwrite output file before scraping (do not resume).')
     parser.add_argument('--batch-size', type=int, default=None, help='Number of products to process in this batch.')
     parser.add_argument('--batch-number', type=int, default=None, help='Batch number (0-based).')
+    parser.add_argument('--no-aggressive-cleanup', action='store_true', help='Disable aggressive Chrome process cleanup (keeps your browser windows open).')
     args = parser.parse_args()
     if args.overwrite_output:
         output_file = args.output_file or os.getenv("DETAILS_OUTPUT_FILE", "final_product_details.jsonl")
@@ -715,7 +769,8 @@ def main():
         headless=args.headless,
         limit=args.limit,
         output_file=args.output_file,
-        links_file=args.links_file
+        links_file=args.links_file,
+        aggressive_cleanup=not args.no_aggressive_cleanup
     )
     # Batching logic
     if args.batch_size is not None and args.batch_number is not None:

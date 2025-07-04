@@ -74,11 +74,12 @@ class SessionManager:
             os.remove(self.state_file)
             print(f"🗑️ Deleted state file {self.state_file}")
 
-    def selenium_login_and_get_session_data(self, username, password, products_url, search_api_url=None, force_relogin=False):
+    def selenium_login_and_get_session_data(self, username, password, products_url, search_api_url=None, force_relogin=False, driver=None):
         """
         Automates Selenium login, saves cookies, and extracts pageKey and searchId.
         Returns (pageKey, searchId). Uses saved state if available and not forced.
         If search_api_url is provided, will check session validity before reusing.
+        If driver is provided, uses that driver instead of creating a new one.
         """
         import requests
         if not force_relogin:
@@ -116,14 +117,21 @@ class SessionManager:
                         json.dump(cookies, f)
                     print(f"✅ Loaded session state from {self.state_file}")
                     return page_key, search_id
+        
         # Otherwise, do Selenium login
         print("🤖 Launching Selenium to get authenticated session...")
-        options = Options()
-        options.add_argument("--headless")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        
+        # Use provided driver or create new one
+        should_quit_driver = False
+        if driver is None:
+            options = Options()
+            options.add_argument("--headless")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+            should_quit_driver = True
+        
         try:
             driver.get(products_url)
             time.sleep(3)
@@ -157,5 +165,6 @@ class SessionManager:
             print(f"❌ Selenium login failed: {e}")
             return None, None
         finally:
-            driver.quit()
-            print("🤖 Selenium browser closed.") 
+            if should_quit_driver:
+                driver.quit()
+                print("🤖 Selenium browser closed.") 
