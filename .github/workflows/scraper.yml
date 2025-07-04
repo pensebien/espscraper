@@ -57,7 +57,7 @@ jobs:
 
       - name: 🚀 Run ESP scraper
         run: |
-          python -m espscraper --collect-link --new-only --limit 200 --batch-size 100 --headless
+          python -m espscraper --collect-link --limit 200 --batch-size 100 --headless
 
       - name: 📝 Copy new artifacts to artifacts branch
         run: |
