@@ -558,12 +558,12 @@ class ProductDetailScraper(BaseScraper):
                 for line in f:
                     try:
                         data = json.loads(line)
-                        if 'id' in data:
-                            scraped_ids.add(data['id'])
-                        elif 'ProductID' in data:
-                            scraped_ids.add(data['ProductID'])
-                        elif 'url' in data:
-                            scraped_ids.add(data['url'])
+                        if 'id' in data and data['id']:
+                            scraped_ids.add(str(data['id']))
+                        elif 'ProductID' in data and data['ProductID']:
+                            scraped_ids.add(str(data['ProductID']))
+                        elif 'url' in data and data['url']:
+                            scraped_ids.add(str(data['url']))
                     except Exception:
                         continue
         return scraped_ids
@@ -572,7 +572,7 @@ class ProductDetailScraper(BaseScraper):
         self.login(force_relogin=force_relogin)
         product_links = self.read_product_links()
         scraped_ids = self.get_scraped_ids()
-        links_to_process = [link for link in product_links if link.get('id') not in scraped_ids]
+        links_to_process = [link for link in product_links if str(link.get('id')) not in scraped_ids]
         if self.limit:
             links_to_process = links_to_process[:self.limit]
         print(f"🚀 Starting to scrape {len(links_to_process)} product pages (skipping {len(scraped_ids)} already scraped)...")
