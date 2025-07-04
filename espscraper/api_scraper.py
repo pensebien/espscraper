@@ -80,7 +80,7 @@ class ApiScraper(BaseScraper):
                 for line in f:
                     try:
                         data = json.loads(line)
-                        pid = data.get('productId') or data.get('ProductID')
+                        pid = data.get('productId') or data.get('ProductID')or data.get('id')
                         if pid:
                             already_scraped_ids.add(str(pid))
                     except Exception:
@@ -213,7 +213,7 @@ class ApiScraper(BaseScraper):
                     return 0
                 page_new_links = 0
                 for product in new_products:
-                    pid = product.get('productId') or product.get('ProductID')
+                    pid = product.get('id') or product.get('productId') or product.get('ProductID')
                     if new_only and pid and str(pid) in already_scraped_ids:
                         continue  # skip already scraped
                     if pid and str(pid) in collected_ids:
