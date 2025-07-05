@@ -315,3 +315,24 @@ urllib3.exceptions.ReadTimeoutError: HTTPConnectionPool(host='localhost', port=5
 2025-07-05 17:10:57,010 - __main__ - INFO - Scraping completed successfully
 2025-07-05 17:10:57,011 - __main__ - INFO - Scraping completed in 1:21:39.149409
 2025-07-05 17:10:57,011 - __main__ - INFO - ✅ Scraping completed successfully
+2025-07-05 17:21:55,720 - __main__ - INFO - ESP Scraper starting...
+2025-07-05 17:21:55,720 - __main__ - INFO - Starting link collection...
+2025-07-05 17:21:55,749 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 17:21:56,012 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 17:21:56,091 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 17:21:56,122 - WDM - INFO - There is no [linux64] chromedriver "138.0.7204.92" for browser google-chrome "138.0.7204" in cache
+2025-07-05 17:21:56,122 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 17:21:56,222 - WDM - INFO - WebDriver version 138.0.7204.92 selected
+2025-07-05 17:21:56,225 - WDM - INFO - Modern chrome version https://storage.googleapis.com/chrome-for-testing-public/138.0.7204.92/linux64/chromedriver-linux64.zip
+2025-07-05 17:21:56,225 - WDM - INFO - About to download new driver from https://storage.googleapis.com/chrome-for-testing-public/138.0.7204.92/linux64/chromedriver-linux64.zip
+2025-07-05 17:21:56,269 - WDM - INFO - Driver downloading response is 200
+2025-07-05 17:21:56,365 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 17:21:56,507 - WDM - INFO - Driver has been saved in cache [/home/runner/.wdm/drivers/chromedriver/linux64/138.0.7204.92]
+2025-07-05 17:22:12,810 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 17:22:12,919 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 17:22:12,952 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 17:22:13,002 - WDM - INFO - Driver [/home/runner/.wdm/drivers/chromedriver/linux64/138.0.7204.92/chromedriver-linux64/chromedriver] found in cache
+2025-07-05 17:22:13,358 - __main__ - INFO - Starting product detail scraping...
+2025-07-05 18:21:37,732 - __main__ - INFO - Scraping completed successfully
+2025-07-05 18:21:37,732 - __main__ - INFO - Scraping completed in 0:59:42.011538
+2025-07-05 18:21:37,732 - __main__ - INFO - ✅ Scraping completed successfully
