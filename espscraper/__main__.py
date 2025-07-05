@@ -20,6 +20,9 @@ def main():
     parser.add_argument('--clear-session', action='store_true', help='Clear session/cache before running')
     parser.add_argument('--new-only', action='store_true', help='Only collect links for products not already scraped (based on the detail output file)')
     parser.add_argument('--no-aggressive-cleanup', action='store_true', help='Disable aggressive Chrome process cleanup (keeps your browser windows open)')
+    parser.add_argument('--max-retries', type=int, default=5, help='Maximum number of retries for individual product scraping (default: 5)')
+    parser.add_argument('--batch-retry-limit', type=int, default=2, help='Maximum number of batch retry attempts for failed products (default: 2)')
+    parser.add_argument('--debug-mode', action='store_true', help='Enable real-time connection monitoring and detailed logging')
     args = parser.parse_args()
 
     # Ensure log directory exists if log-file is specified
@@ -79,7 +82,10 @@ def main():
             limit=args.limit,
             output_file=args.output_file,
             links_file=args.links_file,
-            aggressive_cleanup=not args.no_aggressive_cleanup
+            aggressive_cleanup=not args.no_aggressive_cleanup,
+            max_retries=args.max_retries,
+            batch_retry_limit=args.batch_retry_limit,
+            debug_mode=args.debug_mode
         )
         # Batching logic
         if args.batch_size is not None and args.batch_number is not None:

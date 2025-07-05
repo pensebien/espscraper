@@ -12,10 +12,11 @@ import time
 import urllib.parse
 
 class SessionManager:
-    def __init__(self, cookie_file='tmp/session_cookies.json', domain='.asicentral.com', state_file='tmp/session_state.json'):
+    def __init__(self, cookie_file='tmp/session_cookies.json', domain='.asicentral.com', state_file='tmp/session_state.json', headless=False):
         self.cookie_file = cookie_file
         self.domain = domain
         self.state_file = state_file
+        self.headless = headless
         # Ensure tmp directory exists
         tmp_dir = os.path.dirname(self.cookie_file) or 'tmp'
         os.makedirs(tmp_dir, exist_ok=True)
@@ -125,7 +126,8 @@ class SessionManager:
         should_quit_driver = False
         if driver is None:
             options = Options()
-            options.add_argument("--headless")
+            if self.headless:
+                options.add_argument("--headless=new")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -167,4 +169,27 @@ class SessionManager:
         finally:
             if should_quit_driver:
                 driver.quit()
-                print("🤖 Selenium browser closed.") 
+                print("🤖 Selenium browser closed.")
+
+    def login(self):
+        """Simple login method for testing"""
+        try:
+            username = os.getenv("ESP_USERNAME")
+            password = os.getenv("ESP_PASSWORD")
+            products_url = os.getenv("PRODUCTS_URL")
+            
+            if not all([username, password, products_url]):
+                print("❌ Missing environment variables")
+                return False
+            
+            page_key, search_id = self.selenium_login_and_get_session_data(
+                username, password, products_url
+            )
+            return page_key is not None and search_id is not None
+        except Exception as e:
+            print(f"❌ Login failed: {e}")
+            return False
+    
+    def quit(self):
+        """Clean up method"""
+        pass 

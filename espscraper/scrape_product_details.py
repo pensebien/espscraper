@@ -22,7 +22,7 @@ from espscraper.selenium_resilient_manager import SeleniumResilientManager
 import requests
 
 class ProductDetailScraper(BaseScraper):
-    def __init__(self, session_manager, headless=False, limit=None, output_file=None, links_file=None, aggressive_cleanup=True):
+    def __init__(self, session_manager, headless=False, limit=None, output_file=None, links_file=None, aggressive_cleanup=True, max_retries=5, batch_retry_limit=2, debug_mode=False):
         super().__init__(session_manager)
         self.load_env()
         self.USERNAME = os.getenv("ESP_USERNAME")
@@ -35,41 +35,175 @@ class ProductDetailScraper(BaseScraper):
         self.LINKS_FILE = links_file or os.getenv("DETAILS_LINKS_FILE", os.path.join(data_dir, "api_scraped_links.jsonl"))
         self.limit = limit
         self.headless = headless
-        self.driver_manager = SeleniumResilientManager(
-            headless=self.headless, 
-            setup_callback=None,
-            aggressive_cleanup=aggressive_cleanup
-        )
-        self.driver = self.driver_manager.get_driver()
+        self.max_retries = max_retries
+        self.batch_retry_limit = batch_retry_limit
+        self.debug_mode = debug_mode
+        self.headless_failed = False  # Track if headless mode failed
+        
+        # Use simple Selenium driver instead of resilient manager
+        self.driver = None
+        self._setup_simple_driver()
+
+    def _setup_simple_driver(self):
+        """Setup a simple Selenium driver without the resilient manager"""
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.chrome.service import Service
+        from webdriver_manager.chrome import ChromeDriverManager
+        from selenium import webdriver
+        
+        options = Options()
+        if self.headless:
+            options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-plugins")
+        options.add_argument("--disable-images")  # Reduce memory usage
+        options.add_argument("--disable-web-security")
+        options.add_argument("--disable-features=VizDisplayCompositor")
+        options.add_argument("--disable-ipc-flooding-protection")
+        options.add_argument("--disable-renderer-backgrounding")
+        options.add_argument("--disable-background-timer-throttling")
+        options.add_argument("--disable-backgrounding-occluded-windows")
+        options.add_argument("--disable-client-side-phishing-detection")
+        options.add_argument("--disable-component-extensions-with-background-pages")
+        options.add_argument("--disable-default-apps")
+        options.add_argument("--disable-domain-reliability")
+        options.add_argument("--disable-features=TranslateUI")
+        options.add_argument("--disable-hang-monitor")
+        options.add_argument("--disable-prompt-on-repost")
+        options.add_argument("--disable-sync")
+        options.add_argument("--force-color-profile=srgb")
+        options.add_argument("--metrics-recording-only")
+        options.add_argument("--no-first-run")
+        options.add_argument("--safebrowsing-disable-auto-update")
+        options.add_argument("--enable-automation")
+        options.add_argument("--password-store=basic")
+        options.add_argument("--use-mock-keychain")
+        options.add_argument("--memory-pressure-off")
+        options.add_argument("--max_old_space_size=4096")
+        options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+        
+        if not self.headless:
+            options.add_argument("--start-maximized")
+        
+        service = Service(ChromeDriverManager().install())
+        self.driver = webdriver.Chrome(service=service, options=options)
+        self.driver.set_page_load_timeout(30)
+        self.driver.implicitly_wait(10)
+        
+        # Remove webdriver property to avoid detection
+        try:
+            self.driver.execute_cdp_cmd(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {
+                    "source": """
+                        Object.defineProperty(navigator, 'webdriver', {get: () => undefined})
+                    """
+                },
+            )
+        except Exception:
+            pass
+        
+        print("✅ Simple Chrome driver started successfully")
 
     def setup_selenium(self, driver=None):
         # This method is now only used as a callback if needed for custom setup after driver creation
         pass
 
     def login(self, force_relogin=False):
-        # Use SessionManager to handle login and cookies, passing the existing driver
-        self.session_manager.selenium_login_and_get_session_data(
-            self.USERNAME, self.PASSWORD, self.PRODUCTS_URL, force_relogin=force_relogin, driver=self.driver
-        )
-        # Load cookies into Selenium driver
-        cookies, _, _ = self.session_manager.load_state()
-        if cookies:
+        # Use a simple Selenium driver for login and cookie loading
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.chrome.service import Service
+        from webdriver_manager.chrome import ChromeDriverManager
+        from selenium import webdriver
+        import time
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+
+        # If session is valid and not force_relogin, skip login
+        cookies, page_key, search_id = self.session_manager.load_state()
+        if cookies and page_key and search_id and not force_relogin:
+            print("✅ Loaded session state from file, skipping login.")
+            # Load cookies into the current driver
+            self._load_cookies_into_driver(cookies)
+            return
+
+        print("🤖 Launching simple Selenium for login...")
+        options = Options()
+        if self.headless:
+            options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        try:
+            driver.get(self.PRODUCTS_URL)
+            time.sleep(3)
+            print("🔒 Login page detected. Logging in...")
+            WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "asilogin_UserName")))
+            driver.find_element(By.ID, "asilogin_UserName").send_keys(self.USERNAME)
+            driver.find_element(By.ID, "asilogin_Password").send_keys(self.PASSWORD)
+            driver.find_element(By.ID, "btnLogin").click()
             try:
-                self.driver.get(self.PRODUCTS_URL)
-                for cookie in cookies:
-                    cookie_dict = {k: v for k, v in cookie.items() if k in ['name', 'value', 'domain', 'path', 'expiry', 'secure', 'httpOnly']}
-                    try:
-                        self.driver.add_cookie(cookie_dict)
-                    except Exception:
-                        pass
-                # Use resilient action for refresh to handle timeouts
-                def refresh_action(driver):
-                    driver.refresh()
-                    return True
-                self.driver_manager.resilient_action(refresh_action)
-            except Exception as e:
-                print(f"⚠️ Warning: Could not refresh page after loading cookies: {e}")
-                # Continue anyway, the session might still be valid
+                print("⏳ Waiting for potential login alert...")
+                WebDriverWait(driver, 10).until(EC.alert_is_present())
+                alert = driver.switch_to.alert
+                print(f"⚠️ Alert detected: {alert.text}")
+                alert.accept()
+                print("✅ Alert accepted.")
+            except Exception:
+                print("ℹ️ No login alert appeared, continuing.")
+            WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "hdnPageStateKey")))
+            cookies = driver.get_cookies()
+            with open(self.session_manager.cookie_file, 'w') as f:
+                import json
+                json.dump(cookies, f)
+            page_key = driver.find_element(By.ID, "hdnPageStateKey").get_attribute('value')
+            current_url = driver.current_url
+            import urllib.parse
+            parsed_url = urllib.parse.urlparse(current_url)
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            search_id = query_params['SearchID'][0] if 'SearchID' in query_params else None
+            self.session_manager.save_state(cookies, page_key, search_id)
+            print(f"✅ Selenium login complete. pageKey: {page_key}, searchId: {search_id}")
+            
+            # Load cookies into the current driver
+            self._load_cookies_into_driver(cookies)
+            
+        except Exception as e:
+            print(f"❌ Selenium login failed: {e}")
+        finally:
+            driver.quit()
+            print("🤖 Selenium browser closed.")
+
+    def _load_cookies_into_driver(self, cookies):
+        """Load cookies into the current driver"""
+        try:
+            # First navigate to the domain to set cookies
+            self.driver.get(self.PRODUCTS_URL)
+            time.sleep(2)
+            
+            # Add cookies to the driver
+            for cookie in cookies:
+                try:
+                    # Remove problematic attributes that Selenium doesn't like
+                    cookie_dict = {
+                        'name': cookie['name'],
+                        'value': cookie['value'],
+                        'domain': cookie.get('domain', ''),
+                        'path': cookie.get('path', '/')
+                    }
+                    self.driver.add_cookie(cookie_dict)
+                except Exception as e:
+                    print(f"⚠️ Could not add cookie {cookie.get('name', 'unknown')}: {e}")
+            
+            print(f"✅ Loaded {len(cookies)} cookies into driver")
+        except Exception as e:
+            print(f"⚠️ Error loading cookies into driver: {e}")
 
     def read_product_links(self):
         links = []
@@ -125,242 +259,200 @@ class ProductDetailScraper(BaseScraper):
         """
         try:
             detail_soup = BeautifulSoup(self.driver.page_source, 'html.parser')
-            # Initialize all data points to avoid NameError if a section is missing
-            imprint_info = {}
-            production_time = "N/A"
-            supplier = "N/A"
-            related_products = []
-
-            # --- Product Name (from main section, not summary) ---
+            
+            # --- Product Name (updated selectors) ---
             name = "N/A"
             try:
-                name_elem = detail_soup.select_one('#productDetailsMain h3.text-primary')
-                if name_elem:
-                    name = name_elem.text.strip()
+                # Try multiple selectors for product name
+                name_selectors = [
+                    '#productDetailsMain h3.text-primary',
+                    'h1.product-title',
+                    '.product-name h1',
+                    'h1[data-product-name]',
+                    '.product-header h1',
+                    'h1'
+                ]
+                for selector in name_selectors:
+                    name_elem = detail_soup.select_one(selector)
+                    if name_elem and name_elem.text.strip():
+                        name = name_elem.text.strip()
+                        break
             except:
                 pass
 
-            # Product Number (SKU)
+            # Product Number (SKU) - updated selectors
             sku = "N/A"
             try:
-                sku_elem = detail_soup.select_one('span.product-number')
-                if sku_elem:
-                    sku = sku_elem.text.strip().replace('Product #:', '').strip()
+                sku_selectors = [
+                    'span.product-number',
+                    '.product-sku',
+                    '[data-product-sku]',
+                    '.product-id'
+                ]
+                for selector in sku_selectors:
+                    sku_elem = detail_soup.select_one(selector)
+                    if sku_elem:
+                        sku = sku_elem.text.strip().replace('Product #:', '').strip()
+                        break
             except:
                 pass
 
-            # Short Description (from main section)
+            # Short Description - updated selectors
             short_description = "N/A"
             try:
-                desc_elem = detail_soup.select_one('#productDetailsMain div.product-info p.ng-binding')
-                if desc_elem:
-                    short_description = desc_elem.text.strip()
+                desc_selectors = [
+                    '#productDetailsMain div.product-info p.ng-binding',
+                    '.product-description p',
+                    '.product-summary p',
+                    '[data-product-description]'
+                ]
+                for selector in desc_selectors:
+                    desc_elem = detail_soup.select_one(selector)
+                    if desc_elem and desc_elem.text.strip():
+                        short_description = desc_elem.text.strip()
+                        break
             except:
                 pass
 
-            # --- Variant Images ---
+            # --- Variant Images (simplified) ---
             variant_images = []
             try:
-                product_images_div = detail_soup.select_one('#productImages')
-                if product_images_div:
-                    # Only use <input type="image"> tags for variant images
-                    for img_input in product_images_div.find_all('input', {'type': 'image'}):
-                        if img_input.has_attr('src'):
-                            variant_images.append(img_input['src'])
+                # Try multiple image selectors
+                img_selectors = [
+                    '#productImages input[type="image"]',
+                    '.product-images img',
+                    '.variant-images img',
+                    'img[data-product-image]'
+                ]
+                for selector in img_selectors:
+                    images = detail_soup.select(selector)
+                    if images:
+                        for img in images:
+                            src = img.get('src', '')
+                            if src and src not in variant_images:
+                                variant_images.append(src)
+                        break
             except:
                 pass
 
-            # Main Image URL (first variant or fallback)
+            # Main Image URL
             image_url = variant_images[0] if variant_images else "N/A"
 
-            # Price Range (from main section)
+            # Price Range - updated selectors
             price = "N/A"
             try:
-                price_elem = detail_soup.select_one('#productDetailsMain div.product-price a.ng-binding')
-                if price_elem:
-                    price = price_elem.text.strip()
+                price_selectors = [
+                    '#productDetailsMain div.product-price a.ng-binding',
+                    '.product-price',
+                    '[data-product-price]',
+                    '.price-range'
+                ]
+                for selector in price_selectors:
+                    price_elem = detail_soup.select_one(selector)
+                    if price_elem and price_elem.text.strip():
+                        price = price_elem.text.strip()
+                        break
             except:
                 pass
 
-            # Colors
+            # Colors - updated selectors
             colors = []
             try:
-                color_header = detail_soup.find('span', string=lambda s: s and 'Colors' in s)
-                if color_header:
-                    color_list = color_header.find_next('span', class_='attribute-list-items')
-                    if color_list:
-                        for elem in color_list.find_all(['a', 'span'], recursive=False):
-                            color_text = elem.get_text(strip=True).rstrip(',')
-                            if color_text:
-                                colors.append(color_text)
+                color_selectors = [
+                    'span:contains("Colors") + span',
+                    '.product-colors span',
+                    '[data-product-colors]'
+                ]
+                for selector in color_selectors:
+                    color_elem = detail_soup.select_one(selector)
+                    if color_elem:
+                        color_text = color_elem.get_text(strip=True)
+                        if color_text and color_text != "N/A":
+                            colors = [c.strip() for c in color_text.split(',') if c.strip()]
+                            break
             except:
                 pass
 
-            # --- Imprint Section (Definitive Robust Extraction) ---
+            # --- ProductID from URL ---
+            product_id = None
+            try:
+                parsed_url = urllib.parse.urlparse(self.driver.current_url)
+                for part in urllib.parse.parse_qsl(parsed_url.query):
+                    if part[0].lower() == 'productid':
+                        product_id = part[1]
+                        break
+            except:
+                pass
+
+            # --- UpdateDate and ProductURL ---
+            update_date = None
+            product_url = None
+            try:
+                # Try to extract from JS context
+                product_json = self.driver.execute_script("return (typeof Product !== 'undefined') ? JSON.stringify(Product) : null;")
+                if product_json:
+                    import json as _json
+                    product_js = _json.loads(product_json)
+                    update_date = product_js.get('UpdateDate')
+                    product_url = product_js.get('ProductURL')
+            except:
+                pass
+            
+            # Fallback to HTML if not found
+            if not update_date:
+                try:
+                    update_selectors = [
+                        'span.text-light-2.text-medium.ng-binding',
+                        '.last-updated',
+                        '[data-last-updated]'
+                    ]
+                    for selector in update_selectors:
+                        update_elem = detail_soup.select_one(selector)
+                        if update_elem and 'Last updated' in update_elem.text:
+                            update_date = update_elem.text.replace('Last updated:', '').strip()
+                            break
+                except:
+                    pass
+
+            # --- Simplified Imprint Section ---
             imprint_info = {
                 'General': {},
                 'Methods': {},
                 'Services': {},
-                'Other': {},
-                'Charges': []
+                'Other': {}
             }
             try:
                 imprint_section = detail_soup.select_one('#pnlImprint')
-
                 if imprint_section:
-                    # 1. General Attribute Lists (e.g., Methods, Sizes, Locations, Colors)
+                    # Extract basic imprint info
                     for attr_div in imprint_section.select('div.product-attribute'):
-                        header_elem = attr_div.select_one('span.attribute-header, span.property-label, div.strong')
-                        if not header_elem:
-                            continue
-                        key = header_elem.get_text(strip=True).replace(':', '')
-                        values = [span.get_text(strip=True).replace(',', '') for span in attr_div.select('div.attribute-list-items span.ng-binding, .attribute-list-items span[ng-if]') if span.get_text(strip=True)]
-                        if key and values:
-                            imprint_info['General'][key] = values if len(values) > 1 else values[0]
-
-                    # 2. Per-Method Nested Details (e.g., "Imprint Methods: Digibrite")
-                    for method_block in imprint_section.select('div[ng-if*="value.Options"]'):
-                        method_name_elem = method_block.select_one('div.property-label')
-                        if not method_name_elem:
-                            continue
-
-                        method_name = method_name_elem.get_text(strip=True).replace('Imprint Methods:', '').strip()
-                        if method_name not in imprint_info['Methods']:
-                             imprint_info['Methods'][method_name] = {}
-
-                        for option in method_block.select('div[ng-repeat="option in vm.options"]'):
-                            option_name_elem = option.select_one('div.strong')
-                            if not option_name_elem:
-                                continue
-
-                            option_name = option_name_elem.get_text(strip=True)
-                            
-                            # Corrected selector to find the nested value
-                            option_values = [val.get_text(strip=True) for val in option.select('product-option-values div.ng-binding')]
-                            
-                            # Clean up the key name for consistency
-                            if 'Imprint Size' in option_name:
-                                option_name = 'Size'
-                            elif 'Imprint Location' in option_name:
-                                option_name = 'Location'
-
-                            imprint_info['Methods'][method_name][option_name] = option_values if len(option_values) > 1 else (option_values[0] if option_values else '')
-
-                    # 3. Standalone Key-Value Pairs (e.g., "Personalization: No")
-                    for div in imprint_section.find_all('div', recursive=False):
-                        strong_tag = div.select_one('strong')
-                        p_tag = div.select_one('p')
-                        if strong_tag and p_tag:
-                            key = strong_tag.get_text(strip=True)
-                            value = p_tag.get_text(strip=True)
-                            imprint_info['Other'][key] = value
-
-                    # 4. Charges Extractor (Rewritten for multiple methods)
-                    for charges_block in imprint_section.select('div.attribute-charges > div[ng-if*="value.Charges"]'):
-                        # Get the method name for this block of charges
-                        method_name_text = charges_block.find(string=True, recursive=False)
-                        if not method_name_text:
-                            continue
-                        method_name = method_name_text.strip()
-
-                        if method_name not in imprint_info['Methods']:
-                            imprint_info['Methods'][method_name] = {}
-                        
-                        # Ensure 'Charges' list exists for this method
-                        if 'Charges' not in imprint_info['Methods'][method_name]:
-                            imprint_info['Methods'][method_name]['Charges'] = []
-
-                        # Find the list of charges within this block
-                        charges_ul = charges_block.find('ul')
-                        if not charges_ul:
-                            continue
-
-                        for charge_li in charges_ul.select('li[product-property-charges]'):
-                            charge_data = {}
-                            label_elem = charge_li.select_one('.property-label')
-                            if not label_elem: continue
-                            
-                            charge_data['name'] = ' '.join(label_elem.get_text(strip=True).replace('\u2013', '').split())
-                            
-                            all_prices = charge_li.select('span[asi-price]')
-                            charge_data['price'] = all_prices[0].get_text(strip=True) if len(all_prices) > 0 else "N/A"
-                            charge_data['cost'] = all_prices[1].get_text(strip=True) if len(all_prices) > 1 else "N/A"
-                            
-                            imprint_info['Methods'][method_name]['Charges'].append(charge_data)
-
-                # --- Final cleanup to remove the now-redundant top-level 'Charges' list ---
-                imprint_info.pop('Charges', None)
+                        header_elem = attr_div.select_one('span.attribute-header, span.property-label')
+                        if header_elem:
+                            key = header_elem.get_text(strip=True).replace(':', '')
+                            values = [span.get_text(strip=True) for span in attr_div.select('span.ng-binding') if span.get_text(strip=True)]
+                            if key and values:
+                                imprint_info['General'][key] = values if len(values) > 1 else values[0]
             except Exception as e:
                 print(f"⚠️ Error extracting imprint info: {e}")
 
-            def extract_section(section):
-                info = {}
-                try:
-                    # Extract div.product-attribute as before
-                    for attr in section.find_all('div', class_='product-attribute'):
-                        header = attr.select_one('.attribute-header')
-                        values = attr.select_one('.attribute-list-items')
-                        if header and values:
-                            info[header.text.strip()] = [v.text.strip() for v in values.find_all('span', class_='ng-binding') if v.text.strip()]
-                    # Extract <p> with <strong> label
-                    for p in section.find_all('p'):
-                        strong = p.find('strong')
-                        if strong:
-                            label = strong.text.strip(':').strip()
-                            # Get the value: text after <br> or in <span>
-                            value = p.get_text(separator=' ', strip=True).replace(strong.text, '').strip(' :\n')
-                            if not value:
-                                span = p.find('span', class_='ng-binding')
-                                value = span.text.strip() if span else ''
-                            info[label] = value
-                except Exception as e:
-                    print(f"⚠️ Error extracting section: {e}")
-                return info
-
-            # --- Production Info Section (from Options Section) ---
+            # --- Simplified Production Info ---
             production_info = {}
             try:
                 options_section = detail_soup.select_one('#pnlOptions')
                 if options_section:
-                    production_info = extract_section(options_section)
+                    for attr_div in options_section.select('div.product-attribute'):
+                        header_elem = attr_div.select_one('span.attribute-header')
+                        if header_elem:
+                            key = header_elem.get_text(strip=True)
+                            values = [span.get_text(strip=True) for span in attr_div.select('span.ng-binding') if span.get_text(strip=True)]
+                            if key and values:
+                                production_info[key] = values if len(values) > 1 else values[0]
             except:
                 pass
 
-            # --- Shipping Section ---
-            shipping_info = {}
-            try:
-                shipping_section = detail_soup.select_one('#pnlShipping')
-                if shipping_section:
-                    shipping_info = extract_section(shipping_section)
-            except:
-                pass
-
-            # --- Safety and Compliance Section ---
-            safety_info = {}
-            try:
-                safety_section = detail_soup.select_one('#pnlSafety')
-                if safety_section:
-                    safety_info = extract_section(safety_section)
-            except:
-                pass
-
-            # --- Supplier Info Section ---
-            supplier_info = {}
-            try:
-                supplier_section = detail_soup.select_one('#pnlSupplierInfo')
-                if supplier_section:
-                    # Extract supplier name
-                    name_elem = supplier_section.select_one('.supplier-name')
-                    if name_elem:
-                        supplier_info['Name'] = name_elem.get_text(strip=True)
-                    # Extract ASI number
-                    asi_elem = supplier_section.select_one('.supplier-asi')
-                    if asi_elem:
-                        supplier_info['ASI'] = asi_elem.get_text(strip=True)
-            except:
-                pass
-
-            # --- Production Time and Supplier (from main section) ---
+            # --- Production Time and Supplier ---
+            production_time = "N/A"
+            supplier = "N/A"
             try:
                 production_elem = detail_soup.find('span', string=lambda s: s and 'Production Time' in s)
                 if production_elem:
@@ -382,49 +474,24 @@ class ProductDetailScraper(BaseScraper):
             # --- ProductCPN ---
             product_cpn = None
             try:
-                cpn_elem = detail_soup.select_one('div.product-cpn.ng-binding')
-                if cpn_elem:
-                    product_cpn = cpn_elem.text.strip()
-            except:
-                pass
-
-            # --- ProductID from URL ---
-            product_id = None
-            try:
-                parsed_url = urllib.parse.urlparse(self.driver.current_url)
-                for part in urllib.parse.parse_qsl(parsed_url.query):
-                    if part[0].lower() == 'productid':
-                        product_id = part[1]
+                cpn_selectors = [
+                    'div.product-cpn.ng-binding',
+                    '.product-cpn',
+                    '[data-product-cpn]'
+                ]
+                for selector in cpn_selectors:
+                    cpn_elem = detail_soup.select_one(selector)
+                    if cpn_elem:
+                        product_cpn = cpn_elem.text.strip()
                         break
             except:
                 pass
 
-            # --- UpdateDate and ProductURL (prefer JS variable) ---
-            update_date = None
-            product_url = None
-            try:
-                # Try to extract from JS context
-                product_json = self.driver.execute_script("return (typeof Product !== 'undefined') ? JSON.stringify(Product) : null;")
-                if product_json:
-                    import json as _json
-                    product_js = _json.loads(product_json)
-                    update_date = product_js.get('UpdateDate')
-                    product_url = product_js.get('ProductURL')
-            except:
-                pass
-            # Fallback to HTML if not found
-            if not update_date:
-                try:
-                    update_elem = detail_soup.select_one('span.text-light-2.text-medium.ng-binding')
-                    if update_elem and 'Last updated' in update_elem.text:
-                        update_date = update_elem.text.replace('Last updated:', '').strip()
-                except:
-                    pass
-
-            # --- Pricing Table (now with better error handling) ---
+            # --- Pricing Table (simplified) ---
             pricing_table = self.extract_pricing_table()
 
-            # --- Related Products (API first, fallback to HTML) ---
+            # --- Related Products (simplified) ---
+            related_products = []
             if product_id:
                 try:
                     related_products = self.get_related_products(product_id, soup=detail_soup)
@@ -452,9 +519,9 @@ class ProductDetailScraper(BaseScraper):
                 "RelatedProduct": related_products,
                 "Imprint": imprint_info,
                 "ProductionInfo": production_info,
-                "Shipping": shipping_info,
-                "SafetyAndCompliance": safety_info,
-                "SupplierInfo": supplier_info
+                "Shipping": {},
+                "SafetyAndCompliance": {},
+                "SupplierInfo": {}
             }
 
         except Exception as e:
@@ -588,7 +655,7 @@ class ProductDetailScraper(BaseScraper):
         if self.limit:
             links_to_process = links_to_process[:self.limit]
         print(f"🚀 Starting to scrape {len(links_to_process)} product pages (skipping {len(scraped_ids)} already scraped)...")
-        original_window = self.driver.current_window_handle
+        
         with open(self.OUTPUT_FILE, 'a', encoding='utf-8') as f_out:
             for i, link_info in enumerate(links_to_process):
                 url = link_info.get('url')
@@ -596,59 +663,62 @@ class ProductDetailScraper(BaseScraper):
                 if not url or not product_id:
                     print(f"--- ({i+1}/{len(links_to_process)}) Skipping product with missing URL or ID.")
                     continue
-                print(f"--- ({i+1}/{len(links_to_process)}) Opening Product ID: {product_id} in a new tab...")
-                def scrape_action(driver, url=url, product_id=product_id):
-                    driver.execute_script("window.open();")
-                    new_window = [window for window in driver.window_handles if window != original_window][0]
-                    driver.switch_to.window(new_window)
-                    driver.get(url)
-                    WebDriverWait(driver, 30).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "#productDetailsMain"))
-                    )
+                print(f"--- ({i+1}/{len(links_to_process)}) Loading Product ID: {product_id}...")
+                
+                # Simple scraping without window switching
+                try:
+                    # Load the product page directly
+                    self.driver.get(url)
+                    
+                    # Wait for the page to load with a more flexible approach
+                    try:
+                        WebDriverWait(self.driver, 30).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "#productDetailsMain"))
+                        )
+                    except Exception as e:
+                        print(f"   ⚠️ Timeout waiting for product details, trying alternative selectors...")
+                        # Try alternative selectors
+                        alternative_selectors = [
+                            "h3.text-primary",
+                            ".product-info",
+                            "span.product-number",
+                            "body"
+                        ]
+                        element_found = False
+                        for selector in alternative_selectors:
+                            try:
+                                WebDriverWait(self.driver, 5).until(
+                                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                                )
+                                element_found = True
+                                print(f"   ✅ Found element with selector: {selector}")
+                                break
+                            except:
+                                continue
+                        if not element_found:
+                            print(f"   ❌ Could not find any expected elements on page")
+                            continue
+                    
                     print(f"   ✅ Successfully loaded page for Product ID: {product_id}")
                     scraped_data = self.scrape_product_detail_page()
                     scraped_data['SourceURL'] = url
                     f_out.write(json.dumps(scraped_data) + '\n')
                     f_out.flush()
                     print(f"   ✅ Scraped: {scraped_data.get('Name', 'N/A')}")
-                    if len(driver.window_handles) > 1:
-                        driver.close()
-                        driver.switch_to.window(original_window)
-                    time.sleep(2)  # Add delay between requests
-                try:
-                    self.driver_manager.resilient_action(scrape_action)
+                    
                 except Exception as e:
                     print(f"❌ FAILED to scrape page for Product ID {product_id}. Error: {e}")
                     
-                    # Enhanced error handling and recovery
-                    error_type = type(e).__name__
-                    error_msg = str(e)
-                    
-                    # Handle specific connection errors more aggressively
-                    if "Connection refused" in error_msg or "Failed to establish a new connection" in error_msg:
-                        print("🔧 Connection refused detected - performing aggressive cleanup...")
-                        try:
-                            # Force restart the driver manager completely
-                            self.driver_manager.quit()
-                            time.sleep(5)  # Longer wait for connection issues
-                            self.driver_manager = SeleniumResilientManager(
-                                headless=self.headless, 
-                                setup_callback=None,
-                                max_retries=3,
-                                connection_timeout=45  # Increase timeout for recovery
-                            )
-                            self.driver = self.driver_manager.get_driver()
-                            # Re-login if needed
-                            self.login(force_relogin=False)
-                        except Exception as restart_e:
-                            print(f"⚠️ Could not restart driver manager: {restart_e}")
-                    
-                    # Try to take a screenshot if possible
+                    # Simple error recovery - just restart the driver
                     try:
-                        if self.driver and self.driver_manager._is_driver_alive():
-                            self.driver.save_screenshot(f"failure_product_{product_id}.png")
-                    except Exception as e2:
-                        print("⚠️ Could not take screenshot, driver may be dead.")
+                        print("🔄 Restarting driver due to error...")
+                        self.driver.quit()
+                        time.sleep(3)
+                        self._setup_simple_driver()
+                        # Re-login if needed
+                        self.login(force_relogin=False)
+                    except Exception as restart_e:
+                        print(f"⚠️ Could not restart driver: {restart_e}")
                     
                     # Log the failed product ID for later retry
                     try:
@@ -658,94 +728,125 @@ class ProductDetailScraper(BaseScraper):
                         print(f"⚠️ Could not log failed product ID: {log_e}")
                     
                     # Add delay before continuing to next product
-                    time.sleep(5)  # Longer delay after failures
-                    continue  # Move to the next product
-        self.driver_manager.quit()
+                    time.sleep(3)
+                    continue
+                
+                # Add delay between requests
+                time.sleep(2)
+        
+        # Clean up
+        try:
+            self.driver.quit()
+        except:
+            pass
         print("✅ Done!")
 
-        # Batch retry logic for failed products
-        max_retries = 2
-        retry_delay = 5
-        for attempt in range(1, max_retries + 1):
-            if not os.path.exists("failed_products.txt"):
-                break
+        # Simple retry for failed products
+        if os.path.exists("failed_products.txt"):
+            print(f"🔄 Retrying failed products...")
             with open("failed_products.txt", "r") as f:
                 failed_ids = [line.strip() for line in f if line.strip()]
-            if not failed_ids:
-                break
-            print(f"🔁 Batch retry attempt {attempt} for {len(failed_ids)} failed products...")
-            os.remove("failed_products.txt")  # Remove so we only log new failures
-            # Re-read product links to get the full info for failed IDs
-            product_links_map = {str(link.get('id')): link for link in product_links}
-            scraped_ids = self.get_scraped_ids()  # Refresh scraped IDs before each retry batch
-            still_failed = []  # Track products that still fail
-            with open(self.OUTPUT_FILE, 'a', encoding='utf-8') as f_out:
-                for product_id in failed_ids:
-                    if product_id in scraped_ids:
-                        print(f"⚠️ Product ID {product_id} already scraped, skipping retry and removing from failed list.")
-                        continue
-                    link_info = product_links_map.get(product_id)
-                    if not link_info:
-                        print(f"⚠️ Could not find link info for failed product ID {product_id}, skipping.")
-                        continue
-                    url = link_info.get('url')
-                    print(f"--- [RETRY {attempt}] Retrying Product ID: {product_id}")
-                    def scrape_action(driver, url=url, product_id=product_id):
-                        driver.execute_script("window.open();")
-                        new_window = [window for window in driver.window_handles if window != original_window][0]
-                        driver.switch_to.window(new_window)
-                        driver.get(url)
-                        WebDriverWait(driver, 30).until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, "#productDetailsMain"))
-                        )
-                        print(f"   ✅ [RETRY {attempt}] Successfully loaded page for Product ID: {product_id}")
-                        scraped_data = self.scrape_product_detail_page()
-                        scraped_data['SourceURL'] = url
-                        f_out.write(json.dumps(scraped_data) + '\n')
-                        f_out.flush()
-                        print(f"   ✅ [RETRY {attempt}] Scraped: {scraped_data.get('Name', 'N/A')}")
-                        if len(driver.window_handles) > 1:
-                            driver.close()
-                            driver.switch_to.window(original_window)
-                        time.sleep(2)
-                    try:
-                        self.driver_manager.resilient_action(scrape_action)
-                    except Exception as e:
-                        print(f"❌ [RETRY {attempt}] FAILED to scrape page for Product ID {product_id}. Error: {e}")
+            
+            if failed_ids:
+                print(f"🔄 Retrying {len(failed_ids)} failed products...")
+                # Re-setup driver for retry
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+                self._setup_simple_driver()
+                self.login(force_relogin=False)
+                
+                product_links_map = {str(link.get('id')): link for link in product_links}
+                scraped_ids = self.get_scraped_ids()
+                
+                with open(self.OUTPUT_FILE, 'a', encoding='utf-8') as f_out:
+                    for product_id in failed_ids:
+                        if product_id in scraped_ids:
+                            print(f"⚠️ Product ID {product_id} already scraped, skipping retry.")
+                            continue
                         
-                        # Enhanced error handling for retry attempts
-                        error_msg = str(e)
-                        if "Connection refused" in error_msg or "Failed to establish a new connection" in error_msg:
-                            print(f"🔧 [RETRY {attempt}] Connection refused - performing aggressive cleanup...")
-                            try:
-                                self.driver_manager.quit()
-                                time.sleep(5)
-                                self.driver_manager = SeleniumResilientManager(
-                                    headless=self.headless, 
-                                    setup_callback=None,
-                                    max_retries=3,
-                                    connection_timeout=45
-                                )
-                                self.driver = self.driver_manager.get_driver()
-                                self.login(force_relogin=False)
-                            except Exception as restart_e:
-                                print(f"⚠️ [RETRY {attempt}] Could not restart driver manager: {restart_e}")
+                        link_info = product_links_map.get(product_id)
+                        if not link_info:
+                            print(f"⚠️ Could not find link info for failed product ID {product_id}, skipping.")
+                            continue
+                        
+                        url = link_info.get('url')
+                        print(f"🔄 Retrying Product ID: {product_id}")
                         
                         try:
-                            if self.driver and self.driver_manager._is_driver_alive():
-                                self.driver.save_screenshot(f"failure_product_{product_id}_retry{attempt}.png")
-                        except Exception as e2:
-                            print("⚠️ Could not take screenshot, driver may be dead.")
-                        still_failed.append(product_id)
-                        time.sleep(3)  # Delay between retry failures
-                        continue
-            # After the batch, write only still-failed IDs back to failed_products.txt
-            if still_failed:
-                with open("failed_products.txt", "w") as fail_log:
-                    for pid in still_failed:
-                        fail_log.write(f"{pid}\n")
-            print(f"⏳ Waiting {retry_delay} seconds before next retry batch...")
-            time.sleep(retry_delay)
+                            self.driver.get(url)
+                            
+                            # Wait for page load with better error handling
+                            try:
+                                WebDriverWait(self.driver, 30).until(
+                                    EC.presence_of_element_located((By.CSS_SELECTOR, "#productDetailsMain"))
+                                )
+                            except Exception as e:
+                                print(f"   ⚠️ Timeout waiting for product details, trying alternative selectors...")
+                                # Try alternative selectors
+                                alternative_selectors = [
+                                    "h3.text-primary",
+                                    ".product-info",
+                                    "span.product-number",
+                                    "body"
+                                ]
+                                element_found = False
+                                for selector in alternative_selectors:
+                                    try:
+                                        WebDriverWait(self.driver, 5).until(
+                                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                                        )
+                                        element_found = True
+                                        print(f"   ✅ Found element with selector: {selector}")
+                                        break
+                                    except:
+                                        continue
+                                if not element_found:
+                                    print(f"   ❌ Could not find any expected elements on page")
+                                    continue
+                            
+                            scraped_data = self.scrape_product_detail_page()
+                            if scraped_data:
+                                scraped_data['SourceURL'] = url
+                                f_out.write(json.dumps(scraped_data) + '\n')
+                                f_out.flush()
+                                print(f"   ✅ [RETRY] Scraped: {scraped_data.get('Name', 'N/A')}")
+                            else:
+                                print(f"   ❌ [RETRY] Failed to extract data for Product ID {product_id}")
+                        except Exception as e:
+                            print(f"❌ [RETRY] FAILED to scrape page for Product ID {product_id}. Error: {e}")
+                        
+                        time.sleep(2)
+                
+                # Clean up retry driver
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+            
+            # Remove the failed products file
+            try:
+                os.remove("failed_products.txt")
+            except:
+                pass
+
+    def fallback_to_headful(self):
+        """Fallback to headful mode if headless mode is failing"""
+        if self.headless and not self.headless_failed:
+            print("🔄 Headless mode failing, switching to headful mode...")
+            self.headless_failed = True
+            self.headless = False
+            try:
+                self.driver.quit()
+                self.driver = None
+                self._setup_simple_driver()
+                print("✅ Switched to headful mode successfully")
+                return True
+            except Exception as e:
+                print(f"❌ Failed to switch to headful mode: {e}")
+                return False
+        return False
 
 def main():
     parser = argparse.ArgumentParser(description="Scrape product data from ESP Web.")
@@ -758,6 +859,9 @@ def main():
     parser.add_argument('--batch-size', type=int, default=None, help='Number of products to process in this batch.')
     parser.add_argument('--batch-number', type=int, default=None, help='Batch number (0-based).')
     parser.add_argument('--no-aggressive-cleanup', action='store_true', help='Disable aggressive Chrome process cleanup (keeps your browser windows open).')
+    parser.add_argument('--max-retries', type=int, default=5, help='Maximum number of retries for individual product scraping (default: 5)')
+    parser.add_argument('--batch-retry-limit', type=int, default=2, help='Maximum number of batch retry attempts for failed products (default: 2)')
+    parser.add_argument('--debug-mode', action='store_true', help='Enable real-time connection monitoring.')
     args = parser.parse_args()
     if args.overwrite_output:
         output_file = args.output_file or os.getenv("DETAILS_OUTPUT_FILE", "final_product_details.jsonl")
@@ -770,7 +874,10 @@ def main():
         limit=args.limit,
         output_file=args.output_file,
         links_file=args.links_file,
-        aggressive_cleanup=not args.no_aggressive_cleanup
+        aggressive_cleanup=not args.no_aggressive_cleanup,
+        max_retries=args.max_retries,
+        batch_retry_limit=args.batch_retry_limit,
+        debug_mode=args.debug_mode
     )
     # Batching logic
     if args.batch_size is not None and args.batch_number is not None:
