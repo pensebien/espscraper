@@ -71,8 +71,10 @@ class ApiScraper(BaseScraper):
         import os
         checkpoint_file = self.OUTPUT_FILE.replace('.jsonl', '.checkpoint.txt')
         metadata_file = self.OUTPUT_FILE.replace('.jsonl', '.meta.json')
-        batch_size = 5  # Number of pages to fetch per batch
-        delay = 1  # seconds between page requests
+        batch_size = 3  # Reduced batch size for better rate limiting
+        delay = 2  # Increased delay between page requests
+        batch_delay = 5  # Longer delay between batches
+        max_requests_per_minute = 20  # Rate limiting
         # Load already-scraped product IDs if new_only is set
         already_scraped_ids = set()
         if new_only and detail_output_file and os.path.exists(detail_output_file):
@@ -126,7 +128,7 @@ class ApiScraper(BaseScraper):
         }
         # Fetch first page for ResultsTotal and ResultsPerPage
         try:
-            response = session.post(self.SEARCH_API_URL, json=search_payload, timeout=30)
+            response = make_rate_limited_request(session, self.SEARCH_API_URL, search_payload)
             if response.status_code in (401, 403):
                 raise Exception("Session not authenticated (status code)")
             initial_data = response.json()
@@ -166,7 +168,7 @@ class ApiScraper(BaseScraper):
             search_payload["pageKey"] = page_key
             search_payload["extraParams"] = f"SearchId={search_id}"
             try:
-                response = session.post(self.SEARCH_API_URL, json=search_payload, timeout=30)
+                response = make_rate_limited_request(session, self.SEARCH_API_URL, search_payload)
                 response.raise_for_status()
                 initial_data = response.json()
                 print("🔎 First page API response:")
@@ -197,6 +199,29 @@ class ApiScraper(BaseScraper):
             except Exception as e2:
                 print(f"❌ Initial SearchProduct request failed after login: {e2}")
                 return
+        # Rate limiting mechanism
+        request_times = []
+        
+        def check_rate_limit():
+            """Check if we're within rate limits"""
+            current_time = time.time()
+            # Remove requests older than 1 minute
+            request_times[:] = [t for t in request_times if current_time - t < 60]
+            
+            if len(request_times) >= max_requests_per_minute:
+                wait_time = 60 - (current_time - request_times[0])
+                if wait_time > 0:
+                    print(f"⏸️ Rate limit reached. Waiting {wait_time:.1f} seconds...")
+                    time.sleep(wait_time)
+                    return check_rate_limit()  # Recursive check
+            return True
+        
+        def make_rate_limited_request(session, url, payload):
+            """Make a request with rate limiting"""
+            check_rate_limit()
+            request_times.append(time.time())
+            return session.post(url, json=payload, timeout=30)
+        
         # Helper function to fetch and write new links for a page
         def fetch_and_write_page(page_num, total_pages, results_total):
             goto_payload = {
@@ -205,7 +230,7 @@ class ApiScraper(BaseScraper):
                 "stats": ""
             }
             try:
-                response = session.post(self.GOTO_PAGE_API_URL, json=goto_payload, timeout=30)
+                response = make_rate_limited_request(session, self.GOTO_PAGE_API_URL, goto_payload)
                 response.raise_for_status()
                 page_data = response.json()
                 new_products = self.extract_products_from_json(page_data)
@@ -263,6 +288,7 @@ class ApiScraper(BaseScraper):
                         print(f"✅ Collected {new_links_collected} new product links.")
                         return {'all_links_collected': False, 'new_links_collected': new_links_collected}
                 current_page = batch_end
+                time.sleep(batch_delay)
             print(f"✅ Link collection complete up to page {current_page-1}.")
             print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
             print(f"✅ Collected {new_links_collected} new product links.")
@@ -307,6 +333,7 @@ class ApiScraper(BaseScraper):
                         print(f"✅ Collected {new_links_collected} new product links.")
                         return {'all_links_collected': False, 'new_links_collected': new_links_collected}
                 current_page = batch_end
+                time.sleep(batch_delay)
             print(f"✅ Link collection complete up to page {current_page-1}.")
             print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
             print(f"✅ Collected {new_links_collected} new product links.")

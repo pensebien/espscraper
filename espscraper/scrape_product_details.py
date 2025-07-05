@@ -20,6 +20,7 @@ import random
 from dotenv import load_dotenv
 from espscraper.selenium_resilient_manager import SeleniumResilientManager
 import requests
+import collections
 
 class ProductDetailScraper(BaseScraper):
     def __init__(self, session_manager, headless=False, limit=None, output_file=None, links_file=None, aggressive_cleanup=True, max_retries=5, batch_retry_limit=2, debug_mode=False):
@@ -655,7 +656,32 @@ class ProductDetailScraper(BaseScraper):
         if self.limit:
             links_to_process = links_to_process[:self.limit]
         print(f"🚀 Starting to scrape {len(links_to_process)} product pages (skipping {len(scraped_ids)} already scraped)...")
-        
+
+        # --- Hardcoded Robust Rate Limiting ---
+        max_requests_per_minute = 20
+        batch_size = 10
+        batch_pause = 10  # seconds
+        min_delay = 2     # minimum delay between requests (seconds)
+        request_times = collections.deque()
+
+        def rate_limit_pause():
+            now = time.time()
+            # Remove requests older than 60 seconds
+            while request_times and now - request_times[0] > 60:
+                request_times.popleft()
+            if len(request_times) >= max_requests_per_minute:
+                wait_time = 60 - (now - request_times[0])
+                if wait_time > 0 and wait_time < 30:  # never sleep too long
+                    print(f"⏸️ [RateLimit] Waiting {wait_time:.1f} seconds to respect per-minute limit...")
+                    time.sleep(wait_time)
+            # Enforce minimum delay between requests
+            if request_times and now - request_times[-1] < min_delay:
+                delay = min_delay - (now - request_times[-1])
+                if delay > 0 and delay < 10:
+                    print(f"⏸️ [MinDelay] Waiting {delay:.2f} seconds...")
+                    time.sleep(delay)
+            request_times.append(time.time())
+
         with open(self.OUTPUT_FILE, 'a', encoding='utf-8') as f_out:
             for i, link_info in enumerate(links_to_process):
                 url = link_info.get('url')
@@ -664,12 +690,14 @@ class ProductDetailScraper(BaseScraper):
                     print(f"--- ({i+1}/{len(links_to_process)}) Skipping product with missing URL or ID.")
                     continue
                 print(f"--- ({i+1}/{len(links_to_process)}) Loading Product ID: {product_id}...")
-                
+
+                # --- Rate limiting before each request ---
+                rate_limit_pause()
+
                 # Simple scraping without window switching
                 try:
                     # Load the product page directly
                     self.driver.get(url)
-                    
                     # Wait for the page to load with a more flexible approach
                     try:
                         WebDriverWait(self.driver, 30).until(
@@ -698,17 +726,14 @@ class ProductDetailScraper(BaseScraper):
                         if not element_found:
                             print(f"   ❌ Could not find any expected elements on page")
                             continue
-                    
                     print(f"   ✅ Successfully loaded page for Product ID: {product_id}")
                     scraped_data = self.scrape_product_detail_page()
                     scraped_data['SourceURL'] = url
                     f_out.write(json.dumps(scraped_data) + '\n')
                     f_out.flush()
                     print(f"   ✅ Scraped: {scraped_data.get('Name', 'N/A')}")
-                    
                 except Exception as e:
                     print(f"❌ FAILED to scrape page for Product ID {product_id}. Error: {e}")
-                    
                     # Simple error recovery - just restart the driver
                     try:
                         print("🔄 Restarting driver due to error...")
@@ -719,21 +744,21 @@ class ProductDetailScraper(BaseScraper):
                         self.login(force_relogin=False)
                     except Exception as restart_e:
                         print(f"⚠️ Could not restart driver: {restart_e}")
-                    
                     # Log the failed product ID for later retry
                     try:
                         with open("failed_products.txt", "a") as fail_log:
                             fail_log.write(f"{product_id}\n")
                     except Exception as log_e:
                         print(f"⚠️ Could not log failed product ID: {log_e}")
-                    
                     # Add delay before continuing to next product
                     time.sleep(3)
                     continue
-                
-                # Add delay between requests
-                time.sleep(2)
-        
+
+                # --- Batch pause after every batch_size products ---
+                if (i + 1) % batch_size == 0 and (i + 1) < len(links_to_process):
+                    print(f"⏸️ [BatchPause] Pausing for {batch_pause} seconds after {batch_size} products...")
+                    time.sleep(batch_pause)
+
         # Clean up
         try:
             self.driver.quit()
