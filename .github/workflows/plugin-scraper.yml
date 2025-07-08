@@ -1,0 +1,81 @@
+name: Plugin Scraper
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Product limit'
+        required: false
+        default: '1000'
+      resume:
+        description: 'Resume previous run'
+        required: false
+        default: 'false'
+
+jobs:
+  scrape_and_upload:
+    runs-on: ubuntu-latest
+
+    env:
+      OUTPUT_FILE: espscraper/data/final_product_details.jsonl
+
+    steps:
+      - name: 📥 Checkout repo
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: 🔧 Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+
+      - name: 📦 Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 📁 Create directories
+        run: |
+          mkdir -p espscraper/data
+          mkdir -p tmp
+          mkdir -p log
+
+      - name: 🚀 Run ESP scraper
+        run: |
+          python3 -m espscraper.production_main \
+            --limit ${{ github.event.inputs.limit || '1000' }} \
+            ${{ github.event.inputs.resume == 'true' && '--resume' || '' }} \
+            --collect-links --headless --log-level INFO
+
+      # --- BATCH UPLOAD TO WORDPRESS PLUGIN ---
+      - name: 📤 Upload batches to WordPress plugin
+        env:
+          WP_API_URL: https://your-wordpress-site.com/wp-json/promostandards-importer/v1/upload
+          WP_API_KEY: ${{ secrets.PROMOSTANDARDS_API_KEY }}
+        run: |
+          # Split the JSONL file into batches of 10 lines each
+          split -l 10 -d --additional-suffix=.jsonl "$OUTPUT_FILE" batch_
+          for batchfile in batch_*.jsonl; do
+            echo "Uploading $batchfile to WordPress plugin..."
+            curl -X POST "$WP_API_URL" \
+              -H "Authorization: Bearer $WP_API_KEY" \
+              -F "file=@$batchfile" \
+              --fail
+            echo "Uploaded $batchfile"
+          done
+
+      # (Optional) Clean up batch files
+      - name: 🧹 Clean up batch files
+        run: rm -f batch_*.jsonl
+
+      # (Optional) Notify or log completion
+      - name: ✅ Notify completion
+        run: echo "All batches uploaded to WordPress plugin."
