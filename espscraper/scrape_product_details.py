@@ -82,7 +82,7 @@ class ProductDetailScraper(BaseScraper):
         options.add_argument("--password-store=basic")
         options.add_argument("--use-mock-keychain")
         options.add_argument("--memory-pressure-off")
-        options.add_argument("--max_old_space_size=4096")
+        options.add_argument("--max_old_space_size=2048")
         options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
@@ -92,8 +92,8 @@ class ProductDetailScraper(BaseScraper):
         
         service = Service(ChromeDriverManager().install())
         self.driver = webdriver.Chrome(service=service, options=options)
-        self.driver.set_page_load_timeout(30)
-        self.driver.implicitly_wait(10)
+        self.driver.set_page_load_timeout(15)
+        self.driver.implicitly_wait(5)
         
         # Remove webdriver property to avoid detection
         try:
@@ -658,10 +658,10 @@ class ProductDetailScraper(BaseScraper):
         print(f"🚀 Starting to scrape {len(links_to_process)} product pages (skipping {len(scraped_ids)} already scraped)...")
 
         # --- Hardcoded Robust Rate Limiting ---
-        max_requests_per_minute = 20
-        batch_size = 10
-        batch_pause = 10  # seconds
-        min_delay = 2     # minimum delay between requests (seconds)
+        max_requests_per_minute = 25
+        batch_size = 15
+        batch_pause = 5
+        min_delay = 1.5
         request_times = collections.deque()
 
         def rate_limit_pause():
@@ -700,7 +700,7 @@ class ProductDetailScraper(BaseScraper):
                     self.driver.get(url)
                     # Wait for the page to load with a more flexible approach
                     try:
-                        WebDriverWait(self.driver, 30).until(
+                        WebDriverWait(self.driver, 15).until(
                             EC.presence_of_element_located((By.CSS_SELECTOR, "#productDetailsMain"))
                         )
                     except Exception as e:
@@ -804,7 +804,7 @@ class ProductDetailScraper(BaseScraper):
                             
                             # Wait for page load with better error handling
                             try:
-                                WebDriverWait(self.driver, 30).until(
+                                WebDriverWait(self.driver, 15).until(
                                     EC.presence_of_element_located((By.CSS_SELECTOR, "#productDetailsMain"))
                                 )
                             except Exception as e:
