@@ -21,6 +21,9 @@ from dotenv import load_dotenv
 from espscraper.selenium_resilient_manager import SeleniumResilientManager
 import requests
 import collections
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
 class ProductDetailScraper(BaseScraper):
     def __init__(self, session_manager, headless=False, limit=None, output_file=None, links_file=None, aggressive_cleanup=True, max_retries=5, batch_retry_limit=2, debug_mode=False):
@@ -108,7 +111,7 @@ class ProductDetailScraper(BaseScraper):
         except Exception:
             pass
         
-        print("✅ Simple Chrome driver started successfully")
+        logging.info("✅ Simple Chrome driver started successfully")
 
     def setup_selenium(self, driver=None):
         # This method is now only used as a callback if needed for custom setup after driver creation
@@ -128,12 +131,12 @@ class ProductDetailScraper(BaseScraper):
         # If session is valid and not force_relogin, skip login
         cookies, page_key, search_id = self.session_manager.load_state()
         if cookies and page_key and search_id and not force_relogin:
-            print("✅ Loaded session state from file, skipping login.")
+            logging.info("✅ Loaded session state from file, skipping login.")
             # Load cookies into the current driver
             self._load_cookies_into_driver(cookies)
             return
 
-        print("🤖 Launching simple Selenium for login...")
+        logging.info("🤖 Launching simple Selenium for login...")
         options = Options()
         if self.headless:
             options.add_argument("--headless=new")
@@ -144,20 +147,20 @@ class ProductDetailScraper(BaseScraper):
         try:
             driver.get(self.PRODUCTS_URL)
             time.sleep(3)
-            print("🔒 Login page detected. Logging in...")
+            logging.info("🔒 Login page detected. Logging in...")
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "asilogin_UserName")))
             driver.find_element(By.ID, "asilogin_UserName").send_keys(self.USERNAME)
             driver.find_element(By.ID, "asilogin_Password").send_keys(self.PASSWORD)
             driver.find_element(By.ID, "btnLogin").click()
             try:
-                print("⏳ Waiting for potential login alert...")
+                logging.info("⏳ Waiting for potential login alert...")
                 WebDriverWait(driver, 10).until(EC.alert_is_present())
                 alert = driver.switch_to.alert
-                print(f"⚠️ Alert detected: {alert.text}")
+                logging.warning(f"⚠️ Alert detected: {alert.text}")
                 alert.accept()
-                print("✅ Alert accepted.")
+                logging.info("✅ Alert accepted.")
             except Exception:
-                print("ℹ️ No login alert appeared, continuing.")
+                logging.info("ℹ️ No login alert appeared, continuing.")
             WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "hdnPageStateKey")))
             cookies = driver.get_cookies()
             with open(self.session_manager.cookie_file, 'w') as f:
@@ -170,16 +173,16 @@ class ProductDetailScraper(BaseScraper):
             query_params = urllib.parse.parse_qs(parsed_url.query)
             search_id = query_params['SearchID'][0] if 'SearchID' in query_params else None
             self.session_manager.save_state(cookies, page_key, search_id)
-            print(f"✅ Selenium login complete. pageKey: {page_key}, searchId: {search_id}")
+            logging.info(f"✅ Selenium login complete. pageKey: {page_key}, searchId: {search_id}")
             
             # Load cookies into the current driver
             self._load_cookies_into_driver(cookies)
             
         except Exception as e:
-            print(f"❌ Selenium login failed: {e}")
+            logging.error(f"❌ Selenium login failed: {e}")
         finally:
             driver.quit()
-            print("🤖 Selenium browser closed.")
+            logging.info("🤖 Selenium browser closed.")
 
     def _load_cookies_into_driver(self, cookies):
         """Load cookies into the current driver"""
@@ -200,11 +203,11 @@ class ProductDetailScraper(BaseScraper):
                     }
                     self.driver.add_cookie(cookie_dict)
                 except Exception as e:
-                    print(f"⚠️ Could not add cookie {cookie.get('name', 'unknown')}: {e}")
+                    logging.warning(f"⚠️ Could not add cookie {cookie.get('name', 'unknown')}: {e}")
             
-            print(f"✅ Loaded {len(cookies)} cookies into driver")
+            logging.info(f"✅ Loaded {len(cookies)} cookies into driver")
         except Exception as e:
-            print(f"⚠️ Error loading cookies into driver: {e}")
+            logging.error(f"⚠️ Error loading cookies into driver: {e}")
 
     def read_product_links(self):
         links = []
@@ -212,9 +215,9 @@ class ProductDetailScraper(BaseScraper):
             with open(self.LINKS_FILE, 'r') as f:
                 for line in f:
                     links.append(json.loads(line))
-            print(f"📄 Read {len(links)} product links from {self.LINKS_FILE}.")
+            logging.info(f"📄 Read {len(links)} product links from {self.LINKS_FILE}.")
         else:
-            print(f"❌ ERROR: Links file not found at {self.LINKS_FILE}")
+            logging.error(f"❌ ERROR: Links file not found at {self.LINKS_FILE}")
         return links
 
     def get_related_products(self, product_id, soup=None):
@@ -434,7 +437,7 @@ class ProductDetailScraper(BaseScraper):
                             if key and values:
                                 imprint_info['General'][key] = values if len(values) > 1 else values[0]
             except Exception as e:
-                print(f"⚠️ Error extracting imprint info: {e}")
+                logging.warning(f"⚠️ Error extracting imprint info: {e}")
 
             # --- Simplified Production Info ---
             production_info = {}
@@ -497,7 +500,7 @@ class ProductDetailScraper(BaseScraper):
                 try:
                     related_products = self.get_related_products(product_id, soup=detail_soup)
                 except Exception as e:
-                    print(f"[RelatedProduct] Error: {e}")
+                    logging.warning(f"[RelatedProduct] Error: {e}")
 
             # Get current URL
             current_url = self.driver.current_url
@@ -526,7 +529,7 @@ class ProductDetailScraper(BaseScraper):
             }
 
         except Exception as e:
-            print(f"❌ Error scraping product detail page: {e}")
+            logging.error(f"❌ Error scraping product detail page: {e}")
             return None
 
     def extract_pricing_table(self):
@@ -555,19 +558,19 @@ class ProductDetailScraper(BaseScraper):
                     continue
             
             if not pricing_section:
-                print('⚠️ No pricing section found, skipping pricing table')
+                logging.warning('⚠️ No pricing section found, skipping pricing table')
                 return []
 
             pricing_soup = BeautifulSoup(pricing_section.get_attribute('innerHTML'), 'html.parser')
             table = pricing_soup.find('table')
 
             if not table:
-                print('⚠️ Pricing table element not found within pricing section.')
+                logging.warning('⚠️ Pricing table element not found within pricing section.')
                 return []
 
             rows = table.find_all('tr')
             if not rows or len(rows) < 2:
-                print('⚠️ Pricing table has no header or data rows.')
+                logging.warning('⚠️ Pricing table has no header or data rows.')
                 return []
 
             # Find the header row with quantities and create a column map {index: quantity}
@@ -583,7 +586,7 @@ class ProductDetailScraper(BaseScraper):
                     continue
 
             if not quantity_map:
-                print('⚠️ Could not parse quantities from the pricing table header.')
+                logging.warning('⚠️ Could not parse quantities from the pricing table header.')
                 return []
 
             # Process data rows
@@ -619,12 +622,12 @@ class ProductDetailScraper(BaseScraper):
                     pricing_table.append({"type": row_label, "breaks": breaks})
             
             if not pricing_table:
-                print('⚠️ Pricing table was parsed, but no valid data was extracted.')
+                logging.warning('⚠️ Pricing table was parsed, but no valid data was extracted.')
             
             return pricing_table
 
         except Exception as e:
-            print(f'⚠️ Error in extract_pricing_table: {e}')
+            logging.warning(f'⚠️ Error in extract_pricing_table: {e}')
             return []
 
     def is_price(self, text):
@@ -647,6 +650,23 @@ class ProductDetailScraper(BaseScraper):
                     except Exception:
                         continue
         return scraped_ids
+    
+    def post_batch_to_wordpress(batch, api_url, api_key):
+        """
+        Send a batch of products to the WordPress REST API endpoint.
+        """
+        if not batch:
+            return
+        # Prepare the batch as JSONL
+        jsonl_data = '\n'.join([json.dumps(product) for product in batch])
+        files = {'file': ('batch.jsonl', jsonl_data)}
+        headers = {'Authorization': f'Bearer {api_key}'}
+        try:
+            response = requests.post(api_url, files=files, headers=headers, timeout=30)
+            response.raise_for_status()
+            logging.info(f"✅ Successfully posted batch of {len(batch)} products to WordPress.")
+        except Exception as e:
+            logging.error(f"❌ Failed to post batch to WordPress: {e}")
 
     def scrape_all_details(self, force_relogin=False):
         self.login(force_relogin=force_relogin)
@@ -655,7 +675,7 @@ class ProductDetailScraper(BaseScraper):
         links_to_process = [link for link in product_links if str(link.get('id')) not in scraped_ids]
         if self.limit:
             links_to_process = links_to_process[:self.limit]
-        print(f"🚀 Starting to scrape {len(links_to_process)} product pages (skipping {len(scraped_ids)} already scraped)...")
+        logging.info(f"🚀 Starting to scrape {len(links_to_process)} product pages (skipping {len(scraped_ids)} already scraped)...")
 
         # --- Hardcoded Robust Rate Limiting ---
         max_requests_per_minute = 25
@@ -663,6 +683,10 @@ class ProductDetailScraper(BaseScraper):
         batch_pause = 5
         min_delay = 1.5
         request_times = collections.deque()
+
+        batch = []
+        api_url = os.getenv("WP_API_URL")  # Set this in your GitHub Action env
+        api_key = os.getenv("WP_API_KEY")  # Set this in your GitHub Action env/secrets
 
         def rate_limit_pause():
             now = time.time()
@@ -672,13 +696,13 @@ class ProductDetailScraper(BaseScraper):
             if len(request_times) >= max_requests_per_minute:
                 wait_time = 60 - (now - request_times[0])
                 if wait_time > 0 and wait_time < 30:  # never sleep too long
-                    print(f"⏸️ [RateLimit] Waiting {wait_time:.1f} seconds to respect per-minute limit...")
+                    logging.info(f"⏸️ [RateLimit] Waiting {wait_time:.1f} seconds to respect per-minute limit...")
                     time.sleep(wait_time)
             # Enforce minimum delay between requests
             if request_times and now - request_times[-1] < min_delay:
                 delay = min_delay - (now - request_times[-1])
                 if delay > 0 and delay < 10:
-                    print(f"⏸️ [MinDelay] Waiting {delay:.2f} seconds...")
+                    logging.info(f"⏸️ [MinDelay] Waiting {delay:.2f} seconds...")
                     time.sleep(delay)
             request_times.append(time.time())
 
@@ -687,9 +711,9 @@ class ProductDetailScraper(BaseScraper):
                 url = link_info.get('url')
                 product_id = link_info.get('id')
                 if not url or not product_id:
-                    print(f"--- ({i+1}/{len(links_to_process)}) Skipping product with missing URL or ID.")
+                    logging.warning(f"--- ({i+1}/{len(links_to_process)}) Skipping product with missing URL or ID.")
                     continue
-                print(f"--- ({i+1}/{len(links_to_process)}) Loading Product ID: {product_id}...")
+                logging.info(f"--- ({i+1}/{len(links_to_process)}) Loading Product ID: {product_id}...")
 
                 # --- Rate limiting before each request ---
                 rate_limit_pause()
@@ -704,7 +728,7 @@ class ProductDetailScraper(BaseScraper):
                             EC.presence_of_element_located((By.CSS_SELECTOR, "#productDetailsMain"))
                         )
                     except Exception as e:
-                        print(f"   ⚠️ Timeout waiting for product details, trying alternative selectors...")
+                        logging.warning(f"   ⚠️ Timeout waiting for product details, trying alternative selectors...")
                         # Try alternative selectors
                         alternative_selectors = [
                             "h3.text-primary",
@@ -719,61 +743,71 @@ class ProductDetailScraper(BaseScraper):
                                     EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                                 )
                                 element_found = True
-                                print(f"   ✅ Found element with selector: {selector}")
+                                logging.info(f"   ✅ Found element with selector: {selector}")
                                 break
                             except:
                                 continue
                         if not element_found:
-                            print(f"   ❌ Could not find any expected elements on page")
+                            logging.warning(f"   ❌ Could not find any expected elements on page")
                             continue
-                    print(f"   ✅ Successfully loaded page for Product ID: {product_id}")
+                    logging.info(f"   ✅ Successfully loaded page for Product ID: {product_id}")
                     scraped_data = self.scrape_product_detail_page()
                     scraped_data['SourceURL'] = url
                     f_out.write(json.dumps(scraped_data) + '\n')
                     f_out.flush()
-                    print(f"   ✅ Scraped: {scraped_data.get('Name', 'N/A')}")
+                    batch.append(scraped_data)
+                    logging.info(f"   ✅ Scraped: {scraped_data.get('Name', 'N/A')}")
+
+                    # POST batch if batch_size reached
+                    if len(batch) >= batch_size:
+                        self.post_batch_to_wordpress(batch, api_url, api_key)
+                        batch = []
                 except Exception as e:
-                    print(f"❌ FAILED to scrape page for Product ID {product_id}. Error: {e}")
+                    logging.error(f"❌ FAILED to scrape page for Product ID {product_id}. Error: {e}")
                     # Simple error recovery - just restart the driver
                     try:
-                        print("🔄 Restarting driver due to error...")
+                        logging.info("🔄 Restarting driver due to error...")
                         self.driver.quit()
                         time.sleep(3)
                         self._setup_simple_driver()
                         # Re-login if needed
                         self.login(force_relogin=False)
                     except Exception as restart_e:
-                        print(f"⚠️ Could not restart driver: {restart_e}")
+                        logging.warning(f"⚠️ Could not restart driver: {restart_e}")
                     # Log the failed product ID for later retry
                     try:
                         with open("failed_products.txt", "a") as fail_log:
                             fail_log.write(f"{product_id}\n")
                     except Exception as log_e:
-                        print(f"⚠️ Could not log failed product ID: {log_e}")
+                        logging.warning(f"⚠️ Could not log failed product ID: {log_e}")
                     # Add delay before continuing to next product
                     time.sleep(3)
                     continue
 
                 # --- Batch pause after every batch_size products ---
                 if (i + 1) % batch_size == 0 and (i + 1) < len(links_to_process):
-                    print(f"⏸️ [BatchPause] Pausing for {batch_pause} seconds after {batch_size} products...")
+                    logging.info(f"⏸️ [BatchPause] Pausing for {batch_pause} seconds after {batch_size} products...")
                     time.sleep(batch_pause)
+
+                if batch:
+                    self.post_batch_to_wordpress(batch, api_url, api_key)
+                    
 
         # Clean up
         try:
             self.driver.quit()
         except:
             pass
-        print("✅ Done!")
+        logging.info("✅ Done!")
 
         # Simple retry for failed products
         if os.path.exists("failed_products.txt"):
-            print(f"🔄 Retrying failed products...")
+            logging.info(f"🔄 Retrying failed products...")
             with open("failed_products.txt", "r") as f:
                 failed_ids = [line.strip() for line in f if line.strip()]
             
             if failed_ids:
-                print(f"🔄 Retrying {len(failed_ids)} failed products...")
+                logging.info(f"🔄 Retrying {len(failed_ids)} failed products...")
                 # Re-setup driver for retry
                 try:
                     self.driver.quit()
@@ -788,16 +822,16 @@ class ProductDetailScraper(BaseScraper):
                 with open(self.OUTPUT_FILE, 'a', encoding='utf-8') as f_out:
                     for product_id in failed_ids:
                         if product_id in scraped_ids:
-                            print(f"⚠️ Product ID {product_id} already scraped, skipping retry.")
+                            logging.warning(f"⚠️ Product ID {product_id} already scraped, skipping retry.")
                             continue
                         
                         link_info = product_links_map.get(product_id)
                         if not link_info:
-                            print(f"⚠️ Could not find link info for failed product ID {product_id}, skipping.")
+                            logging.warning(f"⚠️ Could not find link info for failed product ID {product_id}, skipping.")
                             continue
                         
                         url = link_info.get('url')
-                        print(f"🔄 Retrying Product ID: {product_id}")
+                        logging.info(f"🔄 Retrying Product ID: {product_id}")
                         
                         try:
                             self.driver.get(url)
@@ -808,7 +842,7 @@ class ProductDetailScraper(BaseScraper):
                                     EC.presence_of_element_located((By.CSS_SELECTOR, "#productDetailsMain"))
                                 )
                             except Exception as e:
-                                print(f"   ⚠️ Timeout waiting for product details, trying alternative selectors...")
+                                logging.warning(f"   ⚠️ Timeout waiting for product details, trying alternative selectors...")
                                 # Try alternative selectors
                                 alternative_selectors = [
                                     "h3.text-primary",
@@ -823,12 +857,12 @@ class ProductDetailScraper(BaseScraper):
                                             EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                                         )
                                         element_found = True
-                                        print(f"   ✅ Found element with selector: {selector}")
+                                        logging.info(f"   ✅ Found element with selector: {selector}")
                                         break
                                     except:
                                         continue
                                 if not element_found:
-                                    print(f"   ❌ Could not find any expected elements on page")
+                                    logging.warning(f"   ❌ Could not find any expected elements on page")
                                     continue
                             
                             scraped_data = self.scrape_product_detail_page()
@@ -836,11 +870,11 @@ class ProductDetailScraper(BaseScraper):
                                 scraped_data['SourceURL'] = url
                                 f_out.write(json.dumps(scraped_data) + '\n')
                                 f_out.flush()
-                                print(f"   ✅ [RETRY] Scraped: {scraped_data.get('Name', 'N/A')}")
+                                logging.info(f"   ✅ [RETRY] Scraped: {scraped_data.get('Name', 'N/A')}")
                             else:
-                                print(f"   ❌ [RETRY] Failed to extract data for Product ID {product_id}")
+                                logging.warning(f"   ❌ [RETRY] Failed to extract data for Product ID {product_id}")
                         except Exception as e:
-                            print(f"❌ [RETRY] FAILED to scrape page for Product ID {product_id}. Error: {e}")
+                            logging.error(f"❌ [RETRY] FAILED to scrape page for Product ID {product_id}. Error: {e}")
                         
                         time.sleep(2)
                 
@@ -859,19 +893,20 @@ class ProductDetailScraper(BaseScraper):
     def fallback_to_headful(self):
         """Fallback to headful mode if headless mode is failing"""
         if self.headless and not self.headless_failed:
-            print("🔄 Headless mode failing, switching to headful mode...")
+            logging.info("🔄 Headless mode failing, switching to headful mode...")
             self.headless_failed = True
             self.headless = False
             try:
                 self.driver.quit()
                 self.driver = None
                 self._setup_simple_driver()
-                print("✅ Switched to headful mode successfully")
+                logging.info("✅ Switched to headful mode successfully")
                 return True
             except Exception as e:
-                print(f"❌ Failed to switch to headful mode: {e}")
+                logging.error(f"❌ Failed to switch to headful mode: {e}")
                 return False
         return False
+
 
 def main():
     parser = argparse.ArgumentParser(description="Scrape product data from ESP Web.")
@@ -891,7 +926,7 @@ def main():
     if args.overwrite_output:
         output_file = args.output_file or os.getenv("DETAILS_OUTPUT_FILE", "final_product_details.jsonl")
         open(output_file, 'w').close()  # Truncate the file
-        print(f"⚠️ Output file '{output_file}' has been cleared.")
+        logging.warning(f"⚠️ Output file '{output_file}' has been cleared.")
     session_manager = SessionManager()
     scraper = ProductDetailScraper(
         session_manager,
@@ -914,7 +949,7 @@ def main():
         def batch_read_links():
             return batch_links
         scraper.read_product_links = batch_read_links
-        print(f"🔢 Processing batch {args.batch_number} (products {start} to {end-1})")
+        logging.info(f"🔢 Processing batch {args.batch_number} (products {start} to {end-1})")
     scraper.scrape_all_details(force_relogin=args.force_relogin)
 
 if __name__ == "__main__":

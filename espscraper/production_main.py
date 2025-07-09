@@ -55,6 +55,20 @@ def validate_environment():
         print(f"❌ Environment validation failed: {e}")
         return False
 
+def is_github_actions():
+    """Detect if running inside GitHub Actions."""
+    return os.getenv("GITHUB_ACTIONS") == "true"
+
+def validate_env_vars(required_vars):
+    """Validate required environment variables. Strict in GitHub Actions, warn otherwise."""
+    missing = [var for var in required_vars if not os.getenv(var)]
+    if missing:
+        msg = f"Missing required environment variables: {', '.join(missing)}"
+        if is_github_actions():
+            raise RuntimeError(msg)
+        else:
+            print(f"⚠️ {msg} (not fatal in manual/dev mode)")
+
 def run_scraper(args):
     """Run the scraper with production settings"""
     logger = logging.getLogger(__name__)
@@ -126,9 +140,14 @@ def main():
     logger = setup_logging(args.log_file, args.log_level)
     logger.info("ESP Scraper starting...")
     
-    # Validate environment
-    if not validate_environment():
-        logger.error("Environment validation failed")
+    # Conditionally validate environment variables
+    required_vars = [
+        "ESP_USERNAME", "ESP_PASSWORD", "PRODUCTS_URL", "WP_API_URL", "WP_API_KEY"
+    ]
+    try:
+        validate_env_vars(required_vars)
+    except RuntimeError as e:
+        logger.error(str(e))
         sys.exit(1)
     
     if args.validate_only:

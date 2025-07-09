@@ -1,4 +1,4 @@
-name: Plugin Scraper
+name: Plugin Scraper (Streaming + Batch Save)
 
 on:
   workflow_dispatch:
@@ -15,9 +15,6 @@ on:
 jobs:
   scrape_and_upload:
     runs-on: ubuntu-latest
-
-    env:
-      OUTPUT_FILE: espscraper/data/final_product_details.jsonl
 
     steps:
       - name: 📥 Checkout repo
@@ -48,34 +45,45 @@ jobs:
           mkdir -p tmp
           mkdir -p log
 
-      - name: 🚀 Run ESP scraper
+      - name: Fetch API URL and Key from WordPress
+        id: get_params
+        run: |
+          curl -s "https://your-ngrok-url.ngrok.io/wp-json/promostandards-importer/v1/github-params?secret=your-very-secret-token" > params.json
+          echo "WP_API_URL=$(jq -r .api_url params.json)" >> $GITHUB_ENV
+          echo "WP_API_KEY=$(jq -r .api_key params.json)" >> $GITHUB_ENV
+
+      - name: 🚀 Run ESP scraper (streaming upload + batch save)
         run: |
           python3 -m espscraper.production_main \
             --limit ${{ github.event.inputs.limit || '1000' }} \
             ${{ github.event.inputs.resume == 'true' && '--resume' || '' }} \
             --collect-links --headless --log-level INFO
-
-      # --- BATCH UPLOAD TO WORDPRESS PLUGIN ---
-      - name: 📤 Upload batches to WordPress plugin
         env:
-          WP_API_URL: https://your-wordpress-site.com/wp-json/promostandards-importer/v1/upload
-          WP_API_KEY: ${{ secrets.PROMOSTANDARDS_API_KEY }}
+          WP_API_URL: ${{ env.WP_API_URL }}
+          WP_API_KEY: ${{ env.WP_API_KEY }}
+
+      - name: 📦 Checkout artifacts branch
+        uses: actions/checkout@v4
+        with:
+          ref: artifacts
+          path: artifacts-branch
+
+      - name: 📝 Copy batch files to artifacts branch
         run: |
-          # Split the JSONL file into batches of 10 lines each
-          split -l 10 -d --additional-suffix=.jsonl "$OUTPUT_FILE" batch_
-          for batchfile in batch_*.jsonl; do
-            echo "Uploading $batchfile to WordPress plugin..."
-            curl -X POST "$WP_API_URL" \
-              -H "Authorization: Bearer $WP_API_KEY" \
-              -F "file=@$batchfile" \
-              --fail
-            echo "Uploaded $batchfile"
-          done
+          mkdir -p artifacts-branch/batches
+          cp batch_*.jsonl artifacts-branch/batches/ || true
+          cp batch_*.meta.json artifacts-branch/batches/ || true
 
-      # (Optional) Clean up batch files
-      - name: 🧹 Clean up batch files
-        run: rm -f batch_*.jsonl
+      - name: 🚀 Commit and push batch files
+        run: |
+          cd artifacts-branch
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add batches/
+          git commit -m "Add batch files from workflow run $(date)" || echo "No changes to commit"
+          git push origin artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # (Optional) Notify or log completion
       - name: ✅ Notify completion
-        run: echo "All batches uploaded to WordPress plugin."
+        run: echo "Scraper run, streaming upload, and batch save complete."
