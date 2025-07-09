@@ -651,7 +651,7 @@ class ProductDetailScraper(BaseScraper):
                         continue
         return scraped_ids
     
-    def post_batch_to_wordpress(batch, api_url, api_key):
+    def post_batch_to_wordpress(self, batch, api_url, api_key):
         """
         Send a batch of products to the WordPress REST API endpoint.
         """
