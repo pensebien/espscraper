@@ -1,0 +1,89 @@
+name: Plugin Scraper (Streaming + Batch Save)
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Product limit'
+        required: false
+        default: '500'
+      resume:
+        description: 'Resume previous run'
+        required: false
+        default: 'false'
+
+jobs:
+  scrape_and_upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout repo
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: 🔧 Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+
+      - name: 📦 Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 📁 Create directories
+        run: |
+          mkdir -p espscraper/data
+          mkdir -p tmp
+          mkdir -p log
+
+      - name: Fetch API URL and Key from WordPress
+        id: get_params
+        run: |
+          curl -s "https://your-ngrok-url.ngrok.io/wp-json/promostandards-importer/v1/github-params?secret=your-very-secret-token" > params.json
+          echo "WP_API_URL=$(jq -r .api_url params.json)" >> $GITHUB_ENV
+          echo "WP_API_KEY=$(jq -r .api_key params.json)" >> $GITHUB_ENV
+
+      - name: 🚀 Run ESP scraper (streaming upload + batch save)
+        run: |
+          python3 -m espscraper.production_main \
+            --limit ${{ github.event.inputs.limit || '1000' }} \
+            ${{ github.event.inputs.resume == 'true' && '--resume' || '' }} \
+            --collect-links --headless --log-level INFO
+        env:
+          WP_API_URL: ${{ env.WP_API_URL }}
+          WP_API_KEY: ${{ env.WP_API_KEY }}
+
+      - name: 📦 Checkout artifacts branch
+        uses: actions/checkout@v4
+        with:
+          ref: artifacts
+          path: artifacts-branch
+
+      - name: 📝 Copy batch files to artifacts branch
+        run: |
+          mkdir -p artifacts-branch/batches
+          cp batch_*.jsonl artifacts-branch/batches/ || true
+          cp batch_*.meta.json artifacts-branch/batches/ || true
+
+      - name: 🚀 Commit and push batch files
+        run: |
+          cd artifacts-branch
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add batches/
+          git commit -m "Add batch files from workflow run $(date)" || echo "No changes to commit"
+          git push origin artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ✅ Notify completion
+        run: echo "Scraper run, streaming upload, and batch save complete."

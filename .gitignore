@@ -1,4 +1,8 @@
 .env
+.DS_Store
+node_modules/
 *.png
 *.html
 *.log 
+*.BACKUP
+*.vscode

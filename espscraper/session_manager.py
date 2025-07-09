@@ -10,12 +10,16 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 import time
 import urllib.parse
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
 class SessionManager:
-    def __init__(self, cookie_file='tmp/session_cookies.json', domain='.asicentral.com', state_file='tmp/session_state.json'):
+    def __init__(self, cookie_file='tmp/session_cookies.json', domain='.asicentral.com', state_file='tmp/session_state.json', headless=False):
         self.cookie_file = cookie_file
         self.domain = domain
         self.state_file = state_file
+        self.headless = headless
         # Ensure tmp directory exists
         tmp_dir = os.path.dirname(self.cookie_file) or 'tmp'
         os.makedirs(tmp_dir, exist_ok=True)
@@ -28,7 +32,7 @@ class SessionManager:
         }
         with open(self.state_file, 'w') as f:
             json.dump(state, f)
-        print(f"✅ Session state saved to {self.state_file}")
+        logging.info(f"✅ Session state saved to {self.state_file}")
 
     def load_state(self):
         if os.path.exists(self.state_file):
@@ -44,7 +48,7 @@ class SessionManager:
         cookies = driver.get_cookies()
         with open(self.cookie_file, 'w') as f:
             json.dump(cookies, f)
-        print(f"✅ Cookies saved to {self.cookie_file}")
+        logging.info(f"✅ Cookies saved to {self.cookie_file}")
 
     def get_authenticated_session(self):
         """
@@ -67,18 +71,19 @@ class SessionManager:
         """
         if os.path.exists(self.cookie_file):
             os.remove(self.cookie_file)
-            print(f"🗑️ Deleted cookie file {self.cookie_file}")
+            logging.info(f"🗑️ Deleted cookie file {self.cookie_file}")
         else:
-            print(f"No cookie file to delete at {self.cookie_file}")
+            logging.info(f"No cookie file to delete at {self.cookie_file}")
         if os.path.exists(self.state_file):
             os.remove(self.state_file)
-            print(f"🗑️ Deleted state file {self.state_file}")
+            logging.info(f"🗑️ Deleted state file {self.state_file}")
 
-    def selenium_login_and_get_session_data(self, username, password, products_url, search_api_url=None, force_relogin=False):
+    def selenium_login_and_get_session_data(self, username, password, products_url, search_api_url=None, force_relogin=False, driver=None):
         """
         Automates Selenium login, saves cookies, and extracts pageKey and searchId.
         Returns (pageKey, searchId). Uses saved state if available and not forced.
         If search_api_url is provided, will check session validity before reusing.
+        If driver is provided, uses that driver instead of creating a new one.
         """
         import requests
         if not force_relogin:
@@ -105,42 +110,50 @@ class SessionManager:
                         if resp.status_code == 200 and 'd' in resp.json():
                             with open(self.cookie_file, 'w') as f:
                                 json.dump(cookies, f)
-                            print(f"✅ Loaded and validated session state from {self.state_file}")
+                            logging.info(f"✅ Loaded and validated session state from {self.state_file}")
                             return page_key, search_id
                         else:
-                            print("⚠️ Saved session invalid, will relogin.")
+                            logging.warning("⚠️ Saved session invalid, will relogin.")
                     except Exception as e:
-                        print(f"⚠️ Session validity check failed: {e}. Will relogin.")
+                        logging.warning(f"⚠️ Session validity check failed: {e}. Will relogin.")
                 else:
                     with open(self.cookie_file, 'w') as f:
                         json.dump(cookies, f)
-                    print(f"✅ Loaded session state from {self.state_file}")
+                    logging.info(f"✅ Loaded session state from {self.state_file}")
                     return page_key, search_id
+        
         # Otherwise, do Selenium login
-        print("🤖 Launching Selenium to get authenticated session...")
-        options = Options()
-        options.add_argument("--headless")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        logging.info("🤖 Launching Selenium to get authenticated session...")
+        
+        # Use provided driver or create new one
+        should_quit_driver = False
+        if driver is None:
+            options = Options()
+            if self.headless:
+                options.add_argument("--headless=new")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+            should_quit_driver = True
+        
         try:
             driver.get(products_url)
             time.sleep(3)
-            print("🔒 Login page detected. Logging in...")
+            logging.info("🔒 Login page detected. Logging in...")
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "asilogin_UserName")))
             driver.find_element(By.ID, "asilogin_UserName").send_keys(username)
             driver.find_element(By.ID, "asilogin_Password").send_keys(password)
             driver.find_element(By.ID, "btnLogin").click()
             try:
-                print("⏳ Waiting for potential login alert...")
+                logging.info("⏳ Waiting for potential login alert...")
                 WebDriverWait(driver, 10).until(EC.alert_is_present())
                 alert = driver.switch_to.alert
-                print(f"⚠️ Alert detected: {alert.text}")
+                logging.warning(f"⚠️ Alert detected: {alert.text}")
                 alert.accept()
-                print("✅ Alert accepted.")
+                logging.info("✅ Alert accepted.")
             except Exception:
-                print("ℹ️ No login alert appeared, continuing.")
+                logging.info("ℹ️ No login alert appeared, continuing.")
             WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "hdnPageStateKey")))
             cookies = driver.get_cookies()
             with open(self.cookie_file, 'w') as f:
@@ -151,11 +164,35 @@ class SessionManager:
             query_params = urllib.parse.parse_qs(parsed_url.query)
             search_id = query_params['SearchID'][0] if 'SearchID' in query_params else None
             self.save_state(cookies, page_key, search_id)
-            print(f"✅ Selenium login complete. pageKey: {page_key}, searchId: {search_id}")
+            logging.info(f"✅ Selenium login complete. pageKey: {page_key}, searchId: {search_id}")
             return page_key, search_id
         except Exception as e:
-            print(f"❌ Selenium login failed: {e}")
+            logging.exception(f"❌ Selenium login failed: {e}")
             return None, None
         finally:
-            driver.quit()
-            print("🤖 Selenium browser closed.") 
+            if should_quit_driver:
+                driver.quit()
+                logging.info("🤖 Selenium browser closed.")
+
+    def login(self):
+        """Simple login method for testing"""
+        try:
+            username = os.getenv("ESP_USERNAME")
+            password = os.getenv("ESP_PASSWORD")
+            products_url = os.getenv("PRODUCTS_URL")
+            
+            if not all([username, password, products_url]):
+                logging.warning("❌ Missing environment variables")
+                return False
+            
+            page_key, search_id = self.selenium_login_and_get_session_data(
+                username, password, products_url
+            )
+            return page_key is not None and search_id is not None
+        except Exception as e:
+            logging.exception(f"❌ Login failed: {e}")
+            return False
+    
+    def quit(self):
+        """Clean up method"""
+        pass 

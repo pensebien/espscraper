@@ -17,6 +17,7 @@ import urllib.parse
 from dotenv import load_dotenv
 import argparse
 import math
+import logging
 
 # --- CONFIGURATION ---
 load_dotenv() # Load variables from .env file
@@ -25,8 +26,10 @@ USERNAME = os.getenv("ESP_USERNAME")
 PASSWORD = os.getenv("ESP_PASSWORD")
 
 if not USERNAME or not PASSWORD:
-    print("❌ Error: ESP_USERNAME and ESP_PASSWORD must be set in the .env file.")
+    logging.error("❌ Error: ESP_USERNAME and ESP_PASSWORD must be set in the .env file.")
     exit()
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
 
 class ApiScraper(BaseScraper):
@@ -71,8 +74,10 @@ class ApiScraper(BaseScraper):
         import os
         checkpoint_file = self.OUTPUT_FILE.replace('.jsonl', '.checkpoint.txt')
         metadata_file = self.OUTPUT_FILE.replace('.jsonl', '.meta.json')
-        batch_size = 5  # Number of pages to fetch per batch
-        delay = 1  # seconds between page requests
+        batch_size = 3  # Reduced batch size for better rate limiting
+        delay = 2  # Increased delay between page requests
+        batch_delay = 5  # Longer delay between batches
+        max_requests_per_minute = 20  # Rate limiting
         # Load already-scraped product IDs if new_only is set
         already_scraped_ids = set()
         if new_only and detail_output_file and os.path.exists(detail_output_file):
@@ -80,12 +85,12 @@ class ApiScraper(BaseScraper):
                 for line in f:
                     try:
                         data = json.loads(line)
-                        pid = data.get('productId') or data.get('ProductID')
+                        pid = data.get('productId') or data.get('ProductID')or data.get('id')
                         if pid:
                             already_scraped_ids.add(str(pid))
                     except Exception:
                         continue
-            print(f"🔎 Loaded {len(already_scraped_ids)} already-scraped product IDs from {detail_output_file}")
+            logging.info(f"🔎 Loaded {len(already_scraped_ids)} already-scraped product IDs from {detail_output_file}")
         # Load all collected IDs from output file (for deduplication)
         collected_ids = set()
         if os.path.exists(self.OUTPUT_FILE):
@@ -126,20 +131,20 @@ class ApiScraper(BaseScraper):
         }
         # Fetch first page for ResultsTotal and ResultsPerPage
         try:
-            response = session.post(self.SEARCH_API_URL, json=search_payload, timeout=30)
+            response = make_rate_limited_request(session, self.SEARCH_API_URL, search_payload)
             if response.status_code in (401, 403):
                 raise Exception("Session not authenticated (status code)")
             initial_data = response.json()
-            print("🔎 First page API response:")
+            logging.info("🔎 First page API response:")
             search_state_str = initial_data.get('d', {}).get('SearchState')
             if not search_state_str:
                 raise Exception("No SearchState in response (possible login required)")
             results_per_page = initial_data['d'].get('ResultsPerPage', 22)
             results_total = initial_data['d'].get('ResultsTotal', 0)
             if results_total:
-                print(f"📊 Total products available: {results_total}")
+                logging.info(f"📊 Total products available: {results_total}")
             else:
-                print("⚠️ Warning: resultsTotal not found in API response.")
+                logging.warning("⚠️ Warning: resultsTotal not found in API response.")
             try:
                 total_pages_dynamic = math.ceil(results_total / results_per_page) if results_per_page else 1
             except Exception:
@@ -153,33 +158,33 @@ class ApiScraper(BaseScraper):
                         'totalPages': total_pages_dynamic
                     }, meta_f, indent=2)
             except Exception as meta_e:
-                print(f"⚠️ Could not write metadata file: {meta_e}")
+                logging.warning(f"⚠️ Could not write metadata file: {meta_e}")
         except Exception as e:
-            print(f"⚠️ Saved session failed or expired: {e}. Launching Selenium login...")
+            logging.warning(f"⚠️ Saved session failed or expired: {e}. Launching Selenium login...")
             page_key, search_id = self.session_manager.selenium_login_and_get_session_data(
                 self.USERNAME, self.PASSWORD, self.PRODUCTS_URL, force_relogin=True
             )
             if not page_key or not search_id:
-                print("❌ Could not get pageKey or searchId after login. Aborting.")
+                logging.error("❌ Could not get pageKey or searchId after login. Aborting.")
                 return
             session, _, _ = get_session_and_ids()
             search_payload["pageKey"] = page_key
             search_payload["extraParams"] = f"SearchId={search_id}"
             try:
-                response = session.post(self.SEARCH_API_URL, json=search_payload, timeout=30)
+                response = make_rate_limited_request(session, self.SEARCH_API_URL, search_payload)
                 response.raise_for_status()
                 initial_data = response.json()
-                print("🔎 First page API response:")
+                logging.info("🔎 First page API response:")
                 search_state_str = initial_data.get('d', {}).get('SearchState')
                 if not search_state_str:
-                    print("❌ Could not extract SearchState from initial response. Aborting.")
+                    logging.error("❌ Could not extract SearchState from initial response. Aborting.")
                     return
                 results_per_page = initial_data['d'].get('ResultsPerPage', 22)
                 results_total = initial_data['d'].get('ResultsTotal', 0)
                 if results_total:
-                    print(f"📊 Total products available: {results_total}")
+                    logging.info(f"📊 Total products available: {results_total}")
                 else:
-                    print("⚠️ Warning: resultsTotal not found in API response.")
+                    logging.warning("⚠️ Warning: resultsTotal not found in API response.")
                 try:
                     total_pages_dynamic = math.ceil(results_total / results_per_page) if results_per_page else 1
                 except Exception:
@@ -193,10 +198,33 @@ class ApiScraper(BaseScraper):
                             'totalPages': total_pages_dynamic
                         }, meta_f, indent=2)
                 except Exception as meta_e:
-                    print(f"⚠️ Could not write metadata file: {meta_e}")
+                    logging.warning(f"⚠️ Could not write metadata file: {meta_e}")
             except Exception as e2:
-                print(f"❌ Initial SearchProduct request failed after login: {e2}")
+                logging.error(f"❌ Initial SearchProduct request failed after login: {e2}")
                 return
+        # Rate limiting mechanism
+        request_times = []
+        
+        def check_rate_limit():
+            """Check if we're within rate limits"""
+            current_time = time.time()
+            # Remove requests older than 1 minute
+            request_times[:] = [t for t in request_times if current_time - t < 60]
+            
+            if len(request_times) >= max_requests_per_minute:
+                wait_time = 60 - (current_time - request_times[0])
+                if wait_time > 0:
+                    logging.warning(f"⏸️ Rate limit reached. Waiting {wait_time:.1f} seconds...")
+                    time.sleep(wait_time)
+                    return check_rate_limit()  # Recursive check
+            return True
+        
+        def make_rate_limited_request(session, url, payload):
+            """Make a request with rate limiting"""
+            check_rate_limit()
+            request_times.append(time.time())
+            return session.post(url, json=payload, timeout=30)
+        
         # Helper function to fetch and write new links for a page
         def fetch_and_write_page(page_num, total_pages, results_total):
             goto_payload = {
@@ -205,7 +233,7 @@ class ApiScraper(BaseScraper):
                 "stats": ""
             }
             try:
-                response = session.post(self.GOTO_PAGE_API_URL, json=goto_payload, timeout=30)
+                response = make_rate_limited_request(session, self.GOTO_PAGE_API_URL, goto_payload)
                 response.raise_for_status()
                 page_data = response.json()
                 new_products = self.extract_products_from_json(page_data)
@@ -213,7 +241,7 @@ class ApiScraper(BaseScraper):
                     return 0
                 page_new_links = 0
                 for product in new_products:
-                    pid = product.get('productId') or product.get('ProductID')
+                    pid = product.get('id') or product.get('productId') or product.get('ProductID')
                     if new_only and pid and str(pid) in already_scraped_ids:
                         continue  # skip already scraped
                     if pid and str(pid) in collected_ids:
@@ -222,10 +250,10 @@ class ApiScraper(BaseScraper):
                         f_out.write(json.dumps(product) + '\n')
                     collected_ids.add(str(pid))
                     page_new_links += 1
-                print(f"✅ Page {page_num} complete. {page_new_links} new products written. Total collected: {len(collected_ids)}/{results_total}")
+                logging.info(f"✅ Page {page_num} complete. {page_new_links} new products written. Total collected: {len(collected_ids)}/{results_total}")
                 return page_new_links
             except Exception as e:
-                print(f"❌ Request for page {page_num} failed: {e}")
+                logging.error(f"❌ Request for page {page_num} failed: {e}")
                 return 0
         # Main collection logic
         new_links_collected = 0
@@ -238,7 +266,7 @@ class ApiScraper(BaseScraper):
                     try:
                         last_page = int(f.read().strip())
                         start_page = last_page + 1
-                        print(f"🔄 Resuming from page {start_page} (last completed: {last_page}) [RESUME-MISSING MODE]")
+                        logging.info(f"🔄 Resuming from page {start_page} (last completed: {last_page}) [RESUME-MISSING MODE]")
                     except Exception:
                         start_page = 1
             else:
@@ -257,15 +285,16 @@ class ApiScraper(BaseScraper):
                     with open(checkpoint_file, 'w') as f:
                         f.write(str(page_num))
                     if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
-                        print(f"⚠️ Limit of {limit} reached, or all products collected.")
-                        print(f"✅ Link collection complete up to page {page_num}.")
-                        print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
-                        print(f"✅ Collected {new_links_collected} new product links.")
+                        logging.warning(f"⚠️ Limit of {limit} reached, or all products collected.")
+                        logging.info(f"✅ Link collection complete up to page {page_num}.")
+                        logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+                        logging.info(f"✅ Collected {new_links_collected} new product links.")
                         return {'all_links_collected': False, 'new_links_collected': new_links_collected}
                 current_page = batch_end
-            print(f"✅ Link collection complete up to page {current_page-1}.")
-            print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
-            print(f"✅ Collected {new_links_collected} new product links.")
+                time.sleep(batch_delay)
+            logging.info(f"✅ Link collection complete up to page {current_page-1}.")
+            logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+            logging.info(f"✅ Collected {new_links_collected} new product links.")
             return {'all_links_collected': False, 'new_links_collected': new_links_collected}
         else:
             # Default to new-only mode (fetch from top)
@@ -282,10 +311,10 @@ class ApiScraper(BaseScraper):
                 with open(checkpoint_file, 'w') as f:
                     f.write(str(page_num))
                 if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
-                    print(f"⚠️ Limit of {limit} reached, or all products collected.")
-                    print(f"✅ Link collection complete up to page {page_num}.")
-                    print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
-                    print(f"✅ Collected {new_links_collected} new product links.")
+                    logging.warning(f"⚠️ Limit of {limit} reached, or all products collected.")
+                    logging.info(f"✅ Link collection complete up to page {page_num}.")
+                    logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+                    logging.info(f"✅ Collected {new_links_collected} new product links.")
                     return {'all_links_collected': False, 'new_links_collected': new_links_collected}
             current_page = 3
             while new_links_collected < (limit if limit is not None else results_total) and current_page <= total_pages:
@@ -301,22 +330,23 @@ class ApiScraper(BaseScraper):
                     with open(checkpoint_file, 'w') as f:
                         f.write(str(page_num))
                     if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
-                        print(f"⚠️ Limit of {limit} reached, or all products collected.")
-                        print(f"✅ Link collection complete up to page {page_num}.")
-                        print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
-                        print(f"✅ Collected {new_links_collected} new product links.")
+                        logging.warning(f"⚠️ Limit of {limit} reached, or all products collected.")
+                        logging.info(f"✅ Link collection complete up to page {page_num}.")
+                        logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+                        logging.info(f"✅ Collected {new_links_collected} new product links.")
                         return {'all_links_collected': False, 'new_links_collected': new_links_collected}
                 current_page = batch_end
-            print(f"✅ Link collection complete up to page {current_page-1}.")
-            print(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
-            print(f"✅ Collected {new_links_collected} new product links.")
+                time.sleep(batch_delay)
+            logging.info(f"✅ Link collection complete up to page {current_page-1}.")
+            logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+            logging.info(f"✅ Collected {new_links_collected} new product links.")
             return {'all_links_collected': False, 'new_links_collected': new_links_collected}
 
 def get_authenticated_session_data(driver):
     """
     After login, extracts all necessary session data, including the Authorization token.
     """
-    print("✅ Login successful. Extracting initial session data...")
+    logging.info("✅ Login successful. Extracting initial session data...")
     
     # Wait for a key element to ensure the page is loaded
     WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "hdnPageStateKey")))
@@ -324,11 +354,11 @@ def get_authenticated_session_data(driver):
     # 1. Get Cookies
     cookies = driver.get_cookies()
     requests_cookies = {cookie['name']: cookie['value'] for cookie in cookies}
-    print(f"🍪 Extracted {len(requests_cookies)} cookies.")
+    logging.info(f"🍪 Extracted {len(requests_cookies)} cookies.")
     
     # 2. Get pageKey
     page_key = driver.find_element(By.ID, "hdnPageStateKey").get_attribute('value')
-    print(f"🔑 Extracted pageKey: {page_key}")
+    logging.info(f"🔑 Extracted pageKey: {page_key}")
 
     # 3. Get SearchId from the final URL
     search_id = None
@@ -338,9 +368,9 @@ def get_authenticated_session_data(driver):
         query_params = urllib.parse.parse_qs(parsed_url.query)
         if 'SearchID' in query_params:
             search_id = query_params['SearchID'][0]
-            print(f"🆔 Extracted SearchID from URL: {search_id}")
+            logging.info(f"🆔 Extracted SearchID from URL: {search_id}")
     except Exception as e:
-        print(f"❌ Error extracting SearchID from URL: {e}")
+        logging.error(f"❌ Error extracting SearchID from URL: {e}")
 
     # 4. Get Authorization Token from JavaScript variable
     auth_token = None
@@ -353,7 +383,7 @@ def get_authenticated_session_data(driver):
         # The 'Authorization' header in the text file seems to be a red herring.
         pass
     except Exception as e:
-        print(f"❌ Error extracting Auth Token: {e}")
+        logging.error(f"❌ Error extracting Auth Token: {e}")
 
     return requests_cookies, page_key, search_id
 
@@ -362,7 +392,7 @@ def get_authenticated_cookies():
     Uses Selenium to log into the website and returns the session cookies
     and the initial pageKey.
     """
-    print("🤖 Launching Selenium to get authenticated session...")
+    logging.info("🤖 Launching Selenium to get authenticated session...")
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
@@ -378,7 +408,7 @@ def get_authenticated_cookies():
         driver.get(PRODUCTS_URL)
         time.sleep(3)
 
-        print("🔒 Login page detected. Logging in...")
+        logging.info("🔒 Login page detected. Logging in...")
         WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "asilogin_UserName")))
         
         driver.find_element(By.ID, "asilogin_UserName").send_keys(USERNAME)
@@ -387,14 +417,14 @@ def get_authenticated_cookies():
 
         # NEW: Handle the "already logged in" alert
         try:
-            print("⏳ Waiting for potential login alert...")
+            logging.info("⏳ Waiting for potential login alert...")
             WebDriverWait(driver, 10).until(EC.alert_is_present())
             alert = driver.switch_to.alert
-            print(f"⚠️ Alert detected: {alert.text}")
+            logging.warning(f"⚠️ Alert detected: {alert.text}")
             alert.accept()
-            print("✅ Alert accepted.")
+            logging.info("✅ Alert accepted.")
         except Exception:
-            print("ℹ️ No login alert appeared, continuing.")
+            logging.info("ℹ️ No login alert appeared, continuing.")
         
         # Wait for login to complete by waiting for an element on the products page
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, ".prod-count")))
@@ -402,11 +432,11 @@ def get_authenticated_cookies():
         return get_authenticated_session_data(driver)
 
     except Exception as e:
-        print(f"❌ Selenium login failed: {e}")
+        logging.error(f"❌ Selenium login failed: {e}")
         return None, None, None
     finally:
         driver.quit()
-        print("🤖 Selenium browser closed.")
+        logging.info("🤖 Selenium browser closed.")
 
 def extract_links_from_html(html_content):
     """Parses HTML to find product links and update dates."""
@@ -463,9 +493,9 @@ def main():
         resume_missing=args.resume_missing
     )
     if status and status.get('all_links_collected'):
-        print("All links already collected. You may proceed to detail scraping.")
+        logging.info("All links already collected. You may proceed to detail scraping.")
     elif status:
-        print(f"New links collected: {status.get('new_links_collected', 0)}")
+        logging.info(f"New links collected: {status.get('new_links_collected', 0)}")
 
 if __name__ == "__main__":
     main() 

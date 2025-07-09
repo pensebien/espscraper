@@ -218,3 +218,109 @@ urllib3.exceptions.ReadTimeoutError: HTTPConnectionPool(host='localhost', port=5
 2025-07-01 14:18:21,422 INFO Get LATEST chromedriver version for google-chrome
 2025-07-01 14:18:21,708 INFO Get LATEST chromedriver version for google-chrome
 2025-07-01 14:18:22,066 INFO Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/137.0.7151.119/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-05 07:28:11,601 - __main__ - INFO - ESP Scraper starting...
+2025-07-05 07:28:11,601 - __main__ - INFO - Configuration validation completed successfully
+2025-07-05 07:30:34,590 - __main__ - INFO - ESP Scraper starting...
+2025-07-05 07:30:34,591 - __main__ - INFO - Starting link collection...
+2025-07-05 07:30:35,772 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 07:30:35,929 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 07:30:36,351 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 07:30:36,560 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.92/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-05 07:31:21,343 - __main__ - INFO - Link collection completed: {'all_links_collected': False, 'new_links_collected': 0}
+2025-07-05 07:31:21,345 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 07:31:21,496 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 07:31:21,701 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 07:31:21,884 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.92/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-05 07:31:22,611 - __main__ - INFO - Starting product detail scraping...
+2025-07-05 07:32:06,753 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 07:32:06,961 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 07:32:07,138 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 07:32:07,313 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.92/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-05 07:32:57,602 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 07:32:57,796 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 07:32:58,268 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 07:32:58,451 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.92/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-05 07:33:17,848 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 07:33:18,002 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 07:33:18,175 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 07:33:18,354 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.92/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-05 07:34:29,332 - __main__ - INFO - Scraping completed successfully
+2025-07-05 07:34:29,332 - __main__ - INFO - Scraping completed in 0:03:54.741490
+2025-07-05 07:34:29,332 - __main__ - INFO - ✅ Scraping completed successfully
+2025-07-05 11:26:06,531 - __main__ - INFO - ESP Scraper starting...
+2025-07-05 11:26:06,533 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 11:26:06,672 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:26:07,100 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:26:07,286 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.92/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-05 11:26:07,981 - __main__ - INFO - Starting product detail scraping...
+2025-07-05 11:26:54,472 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 11:26:54,618 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:26:54,795 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:26:54,980 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.92/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-05 11:27:41,997 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 11:27:42,144 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:27:42,329 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:27:42,492 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.92/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-05 11:28:03,756 - __main__ - INFO - ESP Scraper starting...
+2025-07-05 11:28:03,757 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 11:28:03,886 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:28:04,065 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:28:04,253 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.92/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-05 11:28:04,909 - __main__ - INFO - Starting product detail scraping...
+2025-07-05 11:30:08,927 - urllib3.connectionpool - WARNING - Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x1041eec40>: Failed to establish a new connection: [Errno 61] Connection refused')': /session/fd7bf61f43439a1b488370685c8123b2
+2025-07-05 11:30:08,928 - urllib3.connectionpool - WARNING - Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x1041eecd0>: Failed to establish a new connection: [Errno 61] Connection refused')': /session/fd7bf61f43439a1b488370685c8123b2
+2025-07-05 11:30:08,929 - urllib3.connectionpool - WARNING - Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x104196130>: Failed to establish a new connection: [Errno 61] Connection refused')': /session/fd7bf61f43439a1b488370685c8123b2
+2025-07-05 11:30:08,929 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 11:30:09,077 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:30:09,261 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:30:09,422 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.92/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-05 11:30:27,845 - __main__ - INFO - Scraping completed successfully
+2025-07-05 11:30:27,846 - __main__ - INFO - Scraping completed in 0:02:24.089631
+2025-07-05 11:30:27,846 - __main__ - INFO - ✅ Scraping completed successfully
+2025-07-05 11:33:13,394 - __main__ - INFO - ESP Scraper starting...
+2025-07-05 11:33:13,396 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 11:33:13,532 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:33:13,698 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:33:13,872 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.92/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-05 11:33:14,555 - __main__ - INFO - Starting product detail scraping...
+2025-07-05 11:34:06,005 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 11:34:06,160 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:34:06,328 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:34:06,522 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.92/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-05 11:36:08,462 - urllib3.connectionpool - WARNING - Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x107c9dee0>: Failed to establish a new connection: [Errno 61] Connection refused')': /session/9fcd5636b8b6f3780dbf89b0b9ef7cb9
+2025-07-05 11:36:08,463 - urllib3.connectionpool - WARNING - Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x107d417f0>: Failed to establish a new connection: [Errno 61] Connection refused')': /session/9fcd5636b8b6f3780dbf89b0b9ef7cb9
+2025-07-05 11:36:08,463 - urllib3.connectionpool - WARNING - Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x107d41790>: Failed to establish a new connection: [Errno 61] Connection refused')': /session/9fcd5636b8b6f3780dbf89b0b9ef7cb9
+2025-07-05 11:36:08,464 - WDM - INFO - ====== WebDriver manager ======
+2025-07-05 11:36:08,575 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:36:08,957 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-05 11:36:09,133 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.92/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-05 11:36:57,143 - __main__ - INFO - Scraping completed successfully
+2025-07-05 11:36:57,143 - __main__ - INFO - Scraping completed in 0:03:43.748800
+2025-07-05 11:36:57,143 - __main__ - INFO - ✅ Scraping completed successfully
+2025-07-08 18:32:37,899 - __main__ - INFO - ESP Scraper starting...
+2025-07-08 18:32:37,901 - WDM - INFO - ====== WebDriver manager ======
+2025-07-08 18:32:42,498 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-08 18:33:22,531 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-08 18:33:25,341 - WDM - INFO - There is no [mac64] chromedriver "138.0.7204.94" for browser google-chrome "138.0.7204" in cache
+2025-07-08 18:33:25,366 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-08 18:33:33,296 - WDM - INFO - WebDriver version 138.0.7204.94 selected
+2025-07-08 18:33:33,299 - WDM - INFO - Modern chrome version https://storage.googleapis.com/chrome-for-testing-public/138.0.7204.94/mac-arm64/chromedriver-mac-arm64.zip
+2025-07-08 18:33:33,299 - WDM - INFO - About to download new driver from https://storage.googleapis.com/chrome-for-testing-public/138.0.7204.94/mac-arm64/chromedriver-mac-arm64.zip
+2025-07-08 18:33:34,351 - WDM - INFO - Driver downloading response is 200
+2025-07-08 18:33:55,681 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-08 18:33:56,574 - WDM - INFO - Driver has been saved in cache [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.94]
+2025-07-08 18:33:58,486 - __main__ - INFO - Starting product detail scraping...
+2025-07-08 18:34:35,392 - WDM - INFO - ====== WebDriver manager ======
+2025-07-08 18:34:35,597 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-08 18:34:36,640 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-08 18:34:37,504 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.94/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-08 18:34:57,163 - urllib3.connectionpool - WARNING - Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x1044e73d0>: Failed to establish a new connection: [Errno 61] Connection refused')': /session/bb0c6d65c3f168672b7011b3fe268138
+2025-07-08 18:34:57,164 - urllib3.connectionpool - WARNING - Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x1044d5d90>: Failed to establish a new connection: [Errno 61] Connection refused')': /session/bb0c6d65c3f168672b7011b3fe268138
+2025-07-08 18:34:57,164 - urllib3.connectionpool - WARNING - Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x1044d5ca0>: Failed to establish a new connection: [Errno 61] Connection refused')': /session/bb0c6d65c3f168672b7011b3fe268138
+2025-07-08 18:34:57,165 - WDM - INFO - ====== WebDriver manager ======
+2025-07-08 18:34:57,316 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-08 18:34:58,171 - WDM - INFO - Get LATEST chromedriver version for google-chrome
+2025-07-08 18:34:59,107 - WDM - INFO - Driver [/Users/macbookpro/.wdm/drivers/chromedriver/mac64/138.0.7204.94/chromedriver-mac-arm64/chromedriver] found in cache
+2025-07-08 18:35:31,913 - __main__ - INFO - Scraping completed successfully
+2025-07-08 18:35:31,914 - __main__ - INFO - Scraping completed in 0:02:54.013659
+2025-07-08 18:35:31,914 - __main__ - INFO - ✅ Scraping completed successfully
