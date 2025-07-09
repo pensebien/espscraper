@@ -142,8 +142,10 @@ def main():
     
     # Conditionally validate environment variables
     required_vars = [
-        "ESP_USERNAME", "ESP_PASSWORD", "PRODUCTS_URL", "WP_API_URL", "WP_API_KEY"
+        "ESP_USERNAME", "ESP_PASSWORD", "PRODUCTS_URL"
     ]
+    # WordPress variables are optional for now
+    optional_vars = ["WP_API_URL", "WP_API_KEY"]
     try:
         validate_env_vars(required_vars)
     except RuntimeError as e:

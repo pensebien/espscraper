@@ -57,12 +57,14 @@ jobs:
           mkdir -p tmp
           mkdir -p log
 
-      - name: Fetch API URL and Key from WordPress
+      - name: Fetch API URL and Key from WordPress (Optional)
         id: get_params
         run: |
-          curl -s "https://exclusive-carpenter.localsite.io/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}" > params.json
+          # Try to fetch from WordPress, but don't fail if it doesn't work
+          curl -s "https://exclusive-carpenter.localsite.io/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}" > params.json || echo '{"api_url": "", "api_key": ""}' > params.json
           echo "WP_API_URL=$(jq -r .api_url params.json)" >> $GITHUB_ENV
           echo "WP_API_KEY=$(jq -r .api_key params.json)" >> $GITHUB_ENV
+          echo "WordPress integration status: $(jq -r .api_url params.json | grep -q '^$' && echo 'Not configured' || echo 'Configured')"
 
       - name: 🚀 Run ESP scraper (streaming upload + batch save)
         run: |

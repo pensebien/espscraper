@@ -657,6 +657,9 @@ class ProductDetailScraper(BaseScraper):
         """
         if not batch:
             return
+        if not api_url or not api_key:
+            logging.info(f"⚠️ WordPress integration not configured - saving {len(batch)} products locally only")
+            return
         # Prepare the batch as JSONL
         jsonl_data = '\n'.join([json.dumps(product) for product in batch])
         files = {'file': ('batch.jsonl', jsonl_data)}
@@ -685,8 +688,14 @@ class ProductDetailScraper(BaseScraper):
         request_times = collections.deque()
 
         batch = []
-        api_url = os.getenv("WP_API_URL")  # Set this in your GitHub Action env
-        api_key = os.getenv("WP_API_KEY")  # Set this in your GitHub Action env/secrets
+        api_url = os.getenv("WP_API_URL")  # Optional - can be empty
+        api_key = os.getenv("WP_API_KEY")  # Optional - can be empty
+        
+        # Log WordPress integration status
+        if api_url and api_key:
+            logging.info("✅ WordPress integration configured")
+        else:
+            logging.info("⚠️ WordPress integration not configured - data will be saved locally only")
 
         def rate_limit_pause():
             now = time.time()
