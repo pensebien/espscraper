@@ -14,20 +14,21 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 import urllib.parse
-from dotenv import load_dotenv
 import argparse
 import math
 import logging
 
 # --- CONFIGURATION ---
-load_dotenv() # Load variables from .env file
+# Don't load .env file in production - use environment variables directly
+# load_dotenv() # Load variables from .env file
 
 USERNAME = os.getenv("ESP_USERNAME")
 PASSWORD = os.getenv("ESP_PASSWORD")
 
-if not USERNAME or not PASSWORD:
-    logging.error("❌ Error: ESP_USERNAME and ESP_PASSWORD must be set in the .env file.")
-    exit()
+# Don't exit in production - let the validation handle it
+# if not USERNAME or not PASSWORD:
+#     logging.error("❌ Error: ESP_USERNAME and ESP_PASSWORD must be set in the .env file.")
+#     exit()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 

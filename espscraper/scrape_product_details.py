@@ -17,7 +17,6 @@ from selenium.webdriver.common.keys import Keys
 import argparse
 import urllib.parse
 import random
-from dotenv import load_dotenv
 from espscraper.selenium_resilient_manager import SeleniumResilientManager
 import requests
 import collections
@@ -28,7 +27,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 class ProductDetailScraper(BaseScraper):
     def __init__(self, session_manager, headless=False, limit=None, output_file=None, links_file=None, aggressive_cleanup=True, max_retries=5, batch_retry_limit=2, debug_mode=False):
         super().__init__(session_manager)
-        self.load_env()
+        # Don't load .env file in production - use environment variables directly
+        # self.load_env()
         self.USERNAME = os.getenv("ESP_USERNAME")
         self.PASSWORD = os.getenv("ESP_PASSWORD")
         self.PRODUCTS_URL = os.getenv("PRODUCTS_URL")

@@ -4,10 +4,9 @@ Production configuration for ESP Scraper
 """
 
 import os
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
+# Don't load .env file in production - use environment variables directly
+# from dotenv import load_dotenv
+# load_dotenv()
 
 # Production settings
 PRODUCTION_CONFIG = {

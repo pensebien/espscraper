@@ -60,7 +60,6 @@ jobs:
       - name: Fetch API URL and Key from WordPress
         id: get_params
         run: |
-          run: |
           curl -s "https://exclusive-carpenter.localsite.io/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}" > params.json
           echo "WP_API_URL=$(jq -r .api_url params.json)" >> $GITHUB_ENV
           echo "WP_API_KEY=$(jq -r .api_key params.json)" >> $GITHUB_ENV
@@ -69,9 +68,13 @@ jobs:
         run: |
           python3 -m espscraper.production_main \
             --limit ${{ github.event.inputs.limit || '1000' }} \
-            ${{ github.event.inputs.resume == 'true' && '--resume' || '' }} \
-            --collect-links --headless --log-level INFO
+            --headless
         env:
+          ESP_USERNAME: ${{ secrets.ESP_USERNAME }}
+          ESP_PASSWORD: ${{ secrets.ESP_PASSWORD }}
+          PRODUCTS_URL: ${{ secrets.PRODUCTS_URL }}
+          SEARCH_API_URL: ${{ secrets.SEARCH_API_URL }}
+          GOTO_PAGE_API_URL: ${{ secrets.GOTO_PAGE_API_URL }}
           WP_API_URL: ${{ env.WP_API_URL }}
           WP_API_KEY: ${{ env.WP_API_KEY }}
 
