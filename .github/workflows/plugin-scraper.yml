@@ -6,7 +6,7 @@ on:
       limit:
         description: 'Product limit'
         required: false
-        default: '1000'
+        default: '500'
       resume:
         description: 'Resume previous run'
         required: false
