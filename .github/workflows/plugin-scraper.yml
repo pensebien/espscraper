@@ -60,7 +60,8 @@ jobs:
       - name: Fetch API URL and Key from WordPress
         id: get_params
         run: |
-          curl -s "https://your-ngrok-url.ngrok.io/wp-json/promostandards-importer/v1/github-params?secret=your-very-secret-token" > params.json
+          run: |
+          curl -s "https://exclusive-carpenter.localsite.io/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}" > params.json
           echo "WP_API_URL=$(jq -r .api_url params.json)" >> $GITHUB_ENV
           echo "WP_API_KEY=$(jq -r .api_key params.json)" >> $GITHUB_ENV
 
