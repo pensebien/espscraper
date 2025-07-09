@@ -108,8 +108,8 @@ jobs:
       - name: 📝 Copy batch files to artifacts branch
         run: |
           mkdir -p artifacts-branch/batches
-          cp batch_*.jsonl artifacts-branch/batches/ || true
-          cp batch_*.meta.json artifacts-branch/batches/ || true
+          cp batch_*.jsonl artifacts-branch/batches/ || echo "No batch files found"
+          ls -la batch_*.jsonl || echo "No batch files to list"
 
       - name: 🚀 Commit and push batch files
         run: |
@@ -121,6 +121,13 @@ jobs:
           git push origin artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📋 List created files
+        run: |
+          echo "=== Files created ==="
+          ls -la *.jsonl || echo "No JSONL files found"
+          ls -la espscraper/data/ || echo "No data files found"
+          echo "=== End of files ==="
 
       - name: ✅ Notify completion
         run: echo "Scraper run, streaming upload, and batch save complete."

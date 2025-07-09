@@ -651,6 +651,25 @@ class ProductDetailScraper(BaseScraper):
                         continue
         return scraped_ids
     
+    def post_single_product_to_wordpress(self, product, api_url, api_key):
+        """
+        Send a single product immediately to WordPress for live streaming.
+        """
+        if not product:
+            return
+        if not api_url or not api_key:
+            return
+        # Prepare single product as JSONL
+        jsonl_data = json.dumps(product) + '\n'
+        files = {'file': ('single_product.jsonl', jsonl_data)}
+        headers = {'Authorization': f'Bearer {api_key}'}
+        try:
+            response = requests.post(api_url, files=files, headers=headers, timeout=10)
+            response.raise_for_status()
+            logging.info(f"✅ Live streamed single product to WordPress.")
+        except Exception as e:
+            logging.error(f"❌ Failed to live stream product to WordPress: {e}")
+
     def post_batch_to_wordpress(self, batch, api_url, api_key):
         """
         Send a batch of products to the WordPress REST API endpoint.
@@ -767,8 +786,22 @@ class ProductDetailScraper(BaseScraper):
                     batch.append(scraped_data)
                     logging.info(f"   ✅ Scraped: {scraped_data.get('Name', 'N/A')}")
 
-                    # POST batch if batch_size reached
+                    # LIVE STREAMING: Send immediately to WordPress
+                    if api_url and api_key:
+                        # Send single product immediately for live streaming
+                        self.post_single_product_to_wordpress(scraped_data, api_url, api_key)
+                        logging.info(f"   🚀 Live streamed to WordPress: {scraped_data.get('Name', 'N/A')}")
+
+                    # Also maintain batching for file backup
                     if len(batch) >= batch_size:
+                        # Save batch to file
+                        batch_filename = f"batch_{int(time.time())}_{len(batch)}.jsonl"
+                        with open(batch_filename, 'w', encoding='utf-8') as batch_file:
+                            for product in batch:
+                                batch_file.write(json.dumps(product) + '\n')
+                        logging.info(f"📁 Saved batch to {batch_filename}")
+                        
+                        # Post batch to WordPress (as backup)
                         self.post_batch_to_wordpress(batch, api_url, api_key)
                         batch = []
                 except Exception as e:
@@ -799,6 +832,14 @@ class ProductDetailScraper(BaseScraper):
                     time.sleep(batch_pause)
 
                 if batch:
+                    # Save final batch to file
+                    batch_filename = f"batch_{int(time.time())}_{len(batch)}.jsonl"
+                    with open(batch_filename, 'w', encoding='utf-8') as batch_file:
+                        for product in batch:
+                            batch_file.write(json.dumps(product) + '\n')
+                    logging.info(f"📁 Saved final batch to {batch_filename}")
+                    
+                    # Post final batch to WordPress (as backup, since products were already live streamed)
                     self.post_batch_to_wordpress(batch, api_url, api_key)
                     
 
