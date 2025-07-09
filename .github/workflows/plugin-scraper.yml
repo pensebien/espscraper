@@ -11,6 +11,10 @@ on:
         description: 'Resume previous run'
         required: false
         default: 'false'
+        
+permissions:
+  contents: write
+
 
 jobs:
   scrape_and_upload:
