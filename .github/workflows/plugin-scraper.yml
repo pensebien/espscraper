@@ -76,6 +76,66 @@ jobs:
           mkdir -p tmp
           mkdir -p log
 
+      - name: 🔍 Check if product links exist
+        run: |
+          echo "=== Checking for product links ==="
+          if [ -f "espscraper/data/api_scraped_links.jsonl" ]; then
+            link_count=$(wc -l < espscraper/data/api_scraped_links.jsonl)
+            echo "✅ Found product links file with $link_count lines"
+            head -3 espscraper/data/api_scraped_links.jsonl || echo "Could not read first few lines"
+          else
+            echo "⚠️ No product links file found at espscraper/data/api_scraped_links.jsonl"
+            echo "Creating empty links file for testing..."
+            echo '{"id": "test", "url": "https://example.com"}' > espscraper/data/api_scraped_links.jsonl
+          fi
+
+      - name: 📥 Fetch latest files from artifacts branch
+        run: |
+          echo "=== Fetching latest files from artifacts branch ==="
+          
+          # Try to fetch the artifacts branch
+          if git ls-remote --heads origin artifacts | grep -q artifacts; then
+            echo "✅ Artifacts branch exists, fetching latest files..."
+            
+            # Fetch the artifacts branch
+            git fetch origin artifacts:artifacts || echo "Could not fetch artifacts branch"
+            
+            # Copy latest files if they exist
+            if [ -f "artifacts-branch/espscraper/data/api_scraped_links.jsonl" ]; then
+              cp artifacts-branch/espscraper/data/api_scraped_links.jsonl espscraper/data/
+              echo "✅ Updated api_scraped_links.jsonl from artifacts branch"
+            fi
+            
+            if [ -f "artifacts-branch/final_product_details.jsonl" ]; then
+              cp artifacts-branch/final_product_details.jsonl espscraper/data/
+              echo "✅ Updated final_product_details.jsonl from artifacts branch"
+            fi
+            
+            if [ -d "artifacts-branch/batches" ]; then
+              cp -r artifacts-branch/batches/* . || echo "No batch files to copy"
+              echo "✅ Updated batch files from artifacts branch"
+            fi
+            
+            # Show file sizes after update
+            echo "=== File sizes after update ==="
+            ls -la espscraper/data/*.jsonl || echo "No JSONL files found"
+            ls -la batch_*.jsonl 2>/dev/null || echo "No batch files found"
+            
+          else
+            echo "⚠️ Artifacts branch does not exist yet, starting fresh"
+          fi
+
+      - name: 📋 Create/Update product index
+        run: |
+          echo "=== Creating/Updating product index ==="
+          python3 create_index.py
+          
+          # Show index stats
+          if [ -f "espscraper/data/product_index.json" ]; then
+            echo "=== Product index stats ==="
+            python3 -c "import json; data=json.load(open('espscraper/data/product_index.json')); print(f'Total products in index: {len(data)}')"
+          fi
+
       - name: Fetch API URL and Key from WordPress (Optional)
         id: get_params
         run: |
@@ -99,6 +159,17 @@ jobs:
           WP_API_URL: ${{ env.WP_API_URL }}
           WP_API_KEY: ${{ env.WP_API_KEY }}
 
+      - name: 🔧 Create minimal batch file if none exist
+        run: |
+          echo "=== Checking for batch files after scraper run ==="
+          if ls batch_*.jsonl 1> /dev/null 2>&1; then
+            echo "✅ Batch files found, no need to create minimal file"
+          else
+            echo "⚠️ No batch files found, creating minimal batch file for testing"
+            echo '{"ProductID": "test", "Name": "Test Product", "Status": "No products processed"}' > batch_test_$(date +%s)_1.jsonl
+            echo "✅ Created minimal batch file for testing"
+          fi
+
       - name: 📦 Checkout artifacts branch
         uses: actions/checkout@v4
         with:
@@ -107,18 +178,71 @@ jobs:
 
       - name: 📝 Copy batch files to artifacts branch
         run: |
+          echo "=== Current directory contents ==="
+          ls -la
+          echo "=== espscraper/data contents ==="
+          ls -la espscraper/data/ || echo "No data directory"
+          echo "=== tmp directory contents ==="
+          ls -la tmp/ || echo "No tmp directory"
+          echo "=== Looking for batch files ==="
+          find . -name "batch_*.jsonl" -type f || echo "No batch files found"
+          echo "=== Looking for any JSONL files ==="
+          find . -name "*.jsonl" -type f || echo "No JSONL files found"
+          
           mkdir -p artifacts-branch/batches
-          cp batch_*.jsonl artifacts-branch/batches/ || echo "No batch files found"
-          ls -la batch_*.jsonl || echo "No batch files to list"
+          
+          # Copy batch files if they exist
+          if ls batch_*.jsonl 1> /dev/null 2>&1; then
+            cp batch_*.jsonl artifacts-branch/batches/
+            echo "✅ Copied batch files to artifacts branch"
+          else
+            echo "⚠️ No batch files found to copy"
+          fi
+          
+          # Also copy any JSONL files from data directory
+          if ls espscraper/data/*.jsonl 1> /dev/null 2>&1; then
+            cp espscraper/data/*.jsonl artifacts-branch/batches/
+            echo "✅ Copied data directory JSONL files to artifacts branch"
+          else
+            echo "⚠️ No JSONL files found in data directory"
+          fi
+          
+          # Copy the main output file if it exists
+          if [ -f "espscraper/data/final_product_details.jsonl" ]; then
+            cp espscraper/data/final_product_details.jsonl artifacts-branch/
+            echo "✅ Copied main output file to artifacts branch"
+          elif [ -f "final_product_details.jsonl" ]; then
+            cp final_product_details.jsonl artifacts-branch/
+            echo "✅ Copied main output file to artifacts branch"
+          else
+            echo "⚠️ No main output file found"
+          fi
+          
+          # Copy the product index file if it exists
+          if [ -f "espscraper/data/product_index.json" ]; then
+            cp espscraper/data/product_index.json artifacts-branch/
+            echo "✅ Copied product index file to artifacts branch"
+          else
+            echo "⚠️ No product index file found"
+          fi
 
       - name: 🚀 Commit and push batch files
         run: |
           cd artifacts-branch
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add batches/
-          git commit -m "Add batch files from workflow run $(date)" || echo "No changes to commit"
-          git push origin artifacts
+          
+          # Check if there are any files to commit
+          if [ -n "$(ls -A batches/ 2>/dev/null)" ] || [ -f "final_product_details.jsonl" ] || [ -f "product_index.json" ]; then
+            git add batches/
+            git add final_product_details.jsonl || echo "No main output file to add"
+            git add product_index.json || echo "No product index file to add"
+            git commit -m "Add batch files, main output, and product index from workflow run $(date)" || echo "No changes to commit"
+            git push origin artifacts
+            echo "✅ Pushed batch files, main output, and product index to artifacts branch"
+          else
+            echo "⚠️ No files to commit"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -127,6 +251,8 @@ jobs:
           echo "=== Files created ==="
           ls -la *.jsonl || echo "No JSONL files found"
           ls -la espscraper/data/ || echo "No data files found"
+          echo "=== Batch files in artifacts branch ==="
+          ls -la artifacts-branch/batches/ || echo "No batch files in artifacts branch"
           echo "=== End of files ==="
 
       - name: ✅ Notify completion

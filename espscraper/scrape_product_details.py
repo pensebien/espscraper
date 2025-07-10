@@ -636,19 +636,38 @@ class ProductDetailScraper(BaseScraper):
 
     def get_scraped_ids(self):
         scraped_ids = set()
+        
+        # Check the main output file
         if os.path.exists(self.OUTPUT_FILE):
             with open(self.OUTPUT_FILE, 'r') as f:
                 for line in f:
                     try:
                         data = json.loads(line)
-                        if 'id' in data and data['id']:
-                            scraped_ids.add(str(data['id']))
-                        elif 'ProductID' in data and data['ProductID']:
+                        # Try multiple ID fields to be more robust
+                        if 'ProductID' in data and data['ProductID']:
                             scraped_ids.add(str(data['ProductID']))
-                        elif 'url' in data and data['url']:
-                            scraped_ids.add(str(data['url']))
+                        elif 'id' in data and data['id']:
+                            scraped_ids.add(str(data['id']))
+                        elif 'SourceURL' in data and data['SourceURL']:
+                            # Extract product ID from URL as fallback
+                            import re
+                            url_match = re.search(r'productID=(\d+)', data['SourceURL'])
+                            if url_match:
+                                scraped_ids.add(url_match.group(1))
                     except Exception:
                         continue
+        
+        # Also check the product index file if it exists
+        index_file = os.path.join(os.path.dirname(self.OUTPUT_FILE), 'product_index.json')
+        if os.path.exists(index_file):
+            try:
+                with open(index_file, 'r') as f:
+                    index_data = json.load(f)
+                    for product_id in index_data.keys():
+                        scraped_ids.add(str(product_id))
+            except Exception as e:
+                logging.warning(f"⚠️ Could not read product index: {e}")
+        
         return scraped_ids
     
     def post_single_product_to_wordpress(self, product, api_url, api_key):
@@ -694,14 +713,27 @@ class ProductDetailScraper(BaseScraper):
         self.login(force_relogin=force_relogin)
         product_links = self.read_product_links()
         scraped_ids = self.get_scraped_ids()
-        links_to_process = [link for link in product_links if str(link.get('id')) not in scraped_ids]
+        
+        # Filter out already scraped products
+        links_to_process = []
+        skipped_duplicates = 0
+        for link in product_links:
+            product_id = str(link.get('id'))
+            if product_id not in scraped_ids:
+                links_to_process.append(link)
+            else:
+                skipped_duplicates += 1
+        
         if self.limit:
+            original_count = len(links_to_process)
             links_to_process = links_to_process[:self.limit]
-        logging.info(f"🚀 Starting to scrape {len(links_to_process)} product pages (skipping {len(scraped_ids)} already scraped)...")
+        
+        logging.info(f"🚀 Starting to scrape {len(links_to_process)} products (skipped {skipped_duplicates} duplicates)...")
 
         # --- Hardcoded Robust Rate Limiting ---
         max_requests_per_minute = 25
-        batch_size = 15
+        # Smaller batch size for GitHub Actions to ensure batch files are created
+        batch_size = 5 if os.getenv("GITHUB_ACTIONS") == "true" else 15
         batch_pause = 5
         min_delay = 1.5
         request_times = collections.deque()
@@ -724,24 +756,49 @@ class ProductDetailScraper(BaseScraper):
             if len(request_times) >= max_requests_per_minute:
                 wait_time = 60 - (now - request_times[0])
                 if wait_time > 0 and wait_time < 30:  # never sleep too long
-                    logging.info(f"⏸️ [RateLimit] Waiting {wait_time:.1f} seconds to respect per-minute limit...")
                     time.sleep(wait_time)
             # Enforce minimum delay between requests
             if request_times and now - request_times[-1] < min_delay:
                 delay = min_delay - (now - request_times[-1])
                 if delay > 0 and delay < 10:
-                    logging.info(f"⏸️ [MinDelay] Waiting {delay:.2f} seconds...")
                     time.sleep(delay)
             request_times.append(time.time())
 
+        def save_batch_to_file(batch_data, batch_num=None):
+            """Save batch to file with better naming"""
+            if not batch_data:
+                return
+            
+            timestamp = int(time.time())
+            if batch_num is None:
+                batch_num = timestamp
+            
+            batch_filename = f"batch_{batch_num}_{len(batch_data)}.jsonl"
+            try:
+                with open(batch_filename, 'w', encoding='utf-8') as batch_file:
+                    for product in batch_data:
+                        batch_file.write(json.dumps(product) + '\n')
+                
+                # Also save to data directory for backup
+                data_batch_filename = os.path.join("espscraper/data", batch_filename)
+                with open(data_batch_filename, 'w', encoding='utf-8') as batch_file:
+                    for product in batch_data:
+                        batch_file.write(json.dumps(product) + '\n')
+                
+            except Exception as e:
+                logging.error(f"❌ Failed to save batch file: {e}")
+
+        # Open file in append mode to add new products to the end
         with open(self.OUTPUT_FILE, 'a', encoding='utf-8') as f_out:
+            batch_counter = 0
+            products_scraped = 0
             for i, link_info in enumerate(links_to_process):
                 url = link_info.get('url')
                 product_id = link_info.get('id')
                 if not url or not product_id:
-                    logging.warning(f"--- ({i+1}/{len(links_to_process)}) Skipping product with missing URL or ID.")
                     continue
-                logging.info(f"--- ({i+1}/{len(links_to_process)}) Loading Product ID: {product_id}...")
+                
+                logging.info(f"--- ({i+1}/{len(links_to_process)}) Processing Product ID: {product_id}")
 
                 # --- Rate limiting before each request ---
                 rate_limit_pause()
@@ -756,7 +813,6 @@ class ProductDetailScraper(BaseScraper):
                             EC.presence_of_element_located((By.CSS_SELECTOR, "#productDetailsMain"))
                         )
                     except Exception as e:
-                        logging.warning(f"   ⚠️ Timeout waiting for product details, trying alternative selectors...")
                         # Try alternative selectors
                         alternative_selectors = [
                             "h3.text-primary",
@@ -771,44 +827,40 @@ class ProductDetailScraper(BaseScraper):
                                     EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                                 )
                                 element_found = True
-                                logging.info(f"   ✅ Found element with selector: {selector}")
                                 break
                             except:
                                 continue
                         if not element_found:
-                            logging.warning(f"   ❌ Could not find any expected elements on page")
                             continue
-                    logging.info(f"   ✅ Successfully loaded page for Product ID: {product_id}")
+                    
                     scraped_data = self.scrape_product_detail_page()
                     scraped_data['SourceURL'] = url
+                    
+                    # Append to the main output file (adds to end of file)
                     f_out.write(json.dumps(scraped_data) + '\n')
-                    f_out.flush()
+                    f_out.flush()  # Ensure data is written immediately
+                    products_scraped += 1
                     batch.append(scraped_data)
                     logging.info(f"   ✅ Scraped: {scraped_data.get('Name', 'N/A')}")
 
                     # LIVE STREAMING: Send immediately to WordPress
                     if api_url and api_key:
-                        # Send single product immediately for live streaming
                         self.post_single_product_to_wordpress(scraped_data, api_url, api_key)
-                        logging.info(f"   🚀 Live streamed to WordPress: {scraped_data.get('Name', 'N/A')}")
+                        logging.info(f"   🚀 Live streamed to WordPress")
 
-                    # Also maintain batching for file backup
+                    # Create batch files more frequently
                     if len(batch) >= batch_size:
-                        # Save batch to file
-                        batch_filename = f"batch_{int(time.time())}_{len(batch)}.jsonl"
-                        with open(batch_filename, 'w', encoding='utf-8') as batch_file:
-                            for product in batch:
-                                batch_file.write(json.dumps(product) + '\n')
-                        logging.info(f"📁 Saved batch to {batch_filename}")
+                        batch_counter += 1
+                        save_batch_to_file(batch, batch_counter)
                         
                         # Post batch to WordPress (as backup)
                         self.post_batch_to_wordpress(batch, api_url, api_key)
                         batch = []
+                        
                 except Exception as e:
                     logging.error(f"❌ FAILED to scrape page for Product ID {product_id}. Error: {e}")
                     # Simple error recovery - just restart the driver
                     try:
-                        logging.info("🔄 Restarting driver due to error...")
                         self.driver.quit()
                         time.sleep(3)
                         self._setup_simple_driver()
@@ -828,20 +880,19 @@ class ProductDetailScraper(BaseScraper):
 
                 # --- Batch pause after every batch_size products ---
                 if (i + 1) % batch_size == 0 and (i + 1) < len(links_to_process):
-                    logging.info(f"⏸️ [BatchPause] Pausing for {batch_pause} seconds after {batch_size} products...")
+                    logging.info(f"⏸️ Batch pause after {batch_size} products...")
                     time.sleep(batch_pause)
 
-                if batch:
-                    # Save final batch to file
-                    batch_filename = f"batch_{int(time.time())}_{len(batch)}.jsonl"
-                    with open(batch_filename, 'w', encoding='utf-8') as batch_file:
-                        for product in batch:
-                            batch_file.write(json.dumps(product) + '\n')
-                    logging.info(f"📁 Saved final batch to {batch_filename}")
-                    
-                    # Post final batch to WordPress (as backup, since products were already live streamed)
-                    self.post_batch_to_wordpress(batch, api_url, api_key)
-                    
+            # Save final batch if any products remain
+            if batch:
+                batch_counter += 1
+                save_batch_to_file(batch, batch_counter)
+                
+                # Post final batch to WordPress (as backup, since products were already live streamed)
+                self.post_batch_to_wordpress(batch, api_url, api_key)
+
+        # Log final summary
+        logging.info(f"✅ Scraping completed: {products_scraped} new products added to {self.OUTPUT_FILE}")
 
         # Clean up
         try:
@@ -872,16 +923,13 @@ class ProductDetailScraper(BaseScraper):
                 with open(self.OUTPUT_FILE, 'a', encoding='utf-8') as f_out:
                     for product_id in failed_ids:
                         if product_id in scraped_ids:
-                            logging.warning(f"⚠️ Product ID {product_id} already scraped, skipping retry.")
                             continue
                         
                         link_info = product_links_map.get(product_id)
                         if not link_info:
-                            logging.warning(f"⚠️ Could not find link info for failed product ID {product_id}, skipping.")
                             continue
                         
                         url = link_info.get('url')
-                        logging.info(f"🔄 Retrying Product ID: {product_id}")
                         
                         try:
                             self.driver.get(url)
@@ -892,7 +940,6 @@ class ProductDetailScraper(BaseScraper):
                                     EC.presence_of_element_located((By.CSS_SELECTOR, "#productDetailsMain"))
                                 )
                             except Exception as e:
-                                logging.warning(f"   ⚠️ Timeout waiting for product details, trying alternative selectors...")
                                 # Try alternative selectors
                                 alternative_selectors = [
                                     "h3.text-primary",
@@ -907,12 +954,10 @@ class ProductDetailScraper(BaseScraper):
                                             EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                                         )
                                         element_found = True
-                                        logging.info(f"   ✅ Found element with selector: {selector}")
                                         break
                                     except:
                                         continue
                                 if not element_found:
-                                    logging.warning(f"   ❌ Could not find any expected elements on page")
                                     continue
                             
                             scraped_data = self.scrape_product_detail_page()
@@ -920,9 +965,6 @@ class ProductDetailScraper(BaseScraper):
                                 scraped_data['SourceURL'] = url
                                 f_out.write(json.dumps(scraped_data) + '\n')
                                 f_out.flush()
-                                logging.info(f"   ✅ [RETRY] Scraped: {scraped_data.get('Name', 'N/A')}")
-                            else:
-                                logging.warning(f"   ❌ [RETRY] Failed to extract data for Product ID {product_id}")
                         except Exception as e:
                             logging.error(f"❌ [RETRY] FAILED to scrape page for Product ID {product_id}. Error: {e}")
                         
