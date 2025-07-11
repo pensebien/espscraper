@@ -1,6 +1,7 @@
 import json
 import argparse
 import os
+from espscraper.checkpoint_manager import CheckpointManager
 
 REQUIRED_FIELDS = ["ProductID", "Name"]  # Adjust as needed
 
@@ -37,6 +38,10 @@ def load_products(filepath):
     return products
 
 def merge_product_details(existing_path, new_path, output_path):
+    # Use CheckpointManager to get all valid ProductIDs for indexing
+    checkpoint_manager = CheckpointManager('final_product_details.jsonl', id_fields=['ProductID'])
+    scraped_ids, last_valid_id, last_valid_line = checkpoint_manager.get_scraped_ids_and_checkpoint()
+    # scraped_ids can now be used for deduplication or index building below
     existing = load_products(existing_path)
     new = load_products(new_path)
     existing.update(new)

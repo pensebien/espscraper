@@ -21,6 +21,8 @@ from espscraper.selenium_resilient_manager import SeleniumResilientManager
 import requests
 import collections
 import logging
+import datetime
+from espscraper.checkpoint_manager import CheckpointManager
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
@@ -530,6 +532,58 @@ class ProductDetailScraper(BaseScraper):
             # Get current URL
             current_url = self.driver.current_url
 
+            # --- ProductNumber (from mini HTML span) ---
+            product_number = None
+            try:
+                pn_elem = detail_soup.select_one('span.product-number')
+                if pn_elem:
+                    match = re.search(r'Product #[: ]*([0-9A-Za-z-]+)', pn_elem.text)
+                    if match:
+                        product_number = match.group(1)
+            except Exception as e:
+                logging.warning(f"Error extracting ProductNumber: {e}")
+
+            # --- ProductURL (custom template) ---
+            product_url_custom = None
+            if product_number:
+                product_url_custom = f"https://www.hitpromo.net/product/show/{product_number}"
+            
+            # --- ProductArtURL (custom template) ---
+            product_art_url = None
+            if product_number:
+                product_art_url = f"https://www.hitpromo.net/fs/artTemplates/{product_number}/{product_number}.pdf"
+
+            # --- Price (from detail page) ---
+            price_detail = None
+            try:
+                price_div = detail_soup.select_one('div.product-price')
+                if price_div:
+                    price_a = price_div.select_one('a.ng-binding')
+                    if price_a and price_a.text.strip():
+                        price_detail = price_a.text.strip()
+            except Exception as e:
+                logging.warning(f"Error extracting Price: {e}")
+
+            # --- ASI number and SupplierID (if available) ---
+            asi_number = None
+            supplier_id = None
+            try:
+                # Try to extract from JS context or HTML
+                # Example: <span class="asi-number">ASI #: 12345</span>
+                asi_elem = detail_soup.find('span', class_=re.compile(r'asi-number'))
+                if asi_elem:
+                    match = re.search(r'ASI #[: ]*([0-9A-Za-z-]+)', asi_elem.text)
+                    if match:
+                        asi_number = match.group(1)
+                # SupplierID: look for a span or JS variable
+                supplier_elem = detail_soup.find('span', class_=re.compile(r'supplier-id'))
+                if supplier_elem:
+                    match = re.search(r'SupplierID[: ]*([0-9A-Za-z-]+)', supplier_elem.text)
+                    if match:
+                        supplier_id = match.group(1)
+            except Exception as e:
+                logging.warning(f"Error extracting ASI/SupplierID: {e}")
+
             return {
                 "ProductID": product_id,
                 "UpdateDate": update_date,
@@ -550,7 +604,14 @@ class ProductDetailScraper(BaseScraper):
                 "ProductionInfo": production_info,
                 "Shipping": {},
                 "SafetyAndCompliance": {},
-                "SupplierInfo": {}
+                "SupplierInfo": {},
+                # --- Enhanced fields ---
+                "ProductNumber": product_number,
+                "ProductURLCustom": product_url_custom,
+                "ProductArtURL": product_art_url,
+                "PriceDetail": price_detail,
+                "ASINumber": asi_number,
+                "SupplierID": supplier_id,
             }
 
         except Exception as e:
@@ -659,60 +720,25 @@ class ProductDetailScraper(BaseScraper):
         # Matches $7.88, 7.88, 2.70, etc.
         return bool(re.match(r'^\$?\d+(\.\d+)?$', text.strip()))
 
-    def get_scraped_ids(self):
-        scraped_ids = set()
-        
-        # Check the main output file
-        if os.path.exists(self.OUTPUT_FILE):
-            with open(self.OUTPUT_FILE, 'r') as f:
-                for line in f:
-                    try:
-                        data = json.loads(line)
-                        # Try multiple ID fields to be more robust
-                        if 'ProductID' in data and data['ProductID']:
-                            scraped_ids.add(str(data['ProductID']))
-                        elif 'id' in data and data['id']:
-                            scraped_ids.add(str(data['id']))
-                        elif 'SourceURL' in data and data['SourceURL']:
-                            # Extract product ID from URL as fallback
-                            import re
-                            url_match = re.search(r'productID=(\d+)', data['SourceURL'])
-                            if url_match:
-                                scraped_ids.add(url_match.group(1))
-                    except Exception:
-                        continue
-        
-        # Also check the product index file if it exists
-        index_file = os.path.join(os.path.dirname(self.OUTPUT_FILE), 'product_index.json')
-        if os.path.exists(index_file):
-            try:
-                with open(index_file, 'r') as f:
-                    index_data = json.load(f)
-                    for product_id in index_data.keys():
-                        scraped_ids.add(str(product_id))
-            except Exception as e:
-                logging.warning(f"⚠️ Could not read product index: {e}")
-        
-        return scraped_ids
-    
-    def post_single_product_to_wordpress(self, product, api_url, api_key):
+    def post_single_product_to_wordpress(self, product, api_url, api_key, retries=2):
         """
         Send a single product immediately to WordPress for live streaming.
         """
-        if not product:
+        if not product or not api_url or not api_key:
             return
-        if not api_url or not api_key:
-            return
-        # Prepare single product as JSONL
         jsonl_data = json.dumps(product) + '\n'
         files = {'file': ('single_product.jsonl', jsonl_data)}
         headers = {'Authorization': f'Bearer {api_key}'}
-        try:
-            response = requests.post(api_url, files=files, headers=headers, timeout=10)
-            response.raise_for_status()
-            logging.info(f"✅ Live streamed single product to WordPress.")
-        except Exception as e:
-            logging.error(f"❌ Failed to live stream product to WordPress: {e}")
+        for attempt in range(1, retries+1):
+            try:
+                response = requests.post(api_url, files=files, headers=headers, timeout=10)
+                response.raise_for_status()
+                logging.info(f"✅ Live streamed single product to WordPress.")
+                return
+            except Exception as e:
+                logging.error(f"❌ Failed to live stream product to WordPress (attempt {attempt}) for Product ID {product.get('ProductID', 'N/A')}: {e}")
+                if attempt == retries:
+                    logging.error(f"❌ Giving up on live streaming Product ID {product.get('ProductID', 'N/A')}")
 
     def post_batch_to_wordpress(self, batch, api_url, api_key):
         """
@@ -768,9 +794,10 @@ class ProductDetailScraper(BaseScraper):
             return set(), set()
 
     def scrape_all_details(self, force_relogin=False, mode='scrape'):
-        self.login(force_relogin=force_relogin)
+        # On startup, validate/truncate output file and get scraped IDs
+        checkpoint_manager = CheckpointManager(self.OUTPUT_FILE)
+        scraped_ids, last_valid_product_id, last_valid_line = checkpoint_manager.get_scraped_ids_and_checkpoint()
         product_links = self.read_product_links()
-        scraped_ids = self.get_scraped_ids()
         # Heartbeat file logic
         data_dir = os.path.join(os.path.dirname(__file__), 'data')
         heartbeat_file = os.path.join(data_dir, 'scraper_heartbeat.txt')
@@ -904,27 +931,21 @@ class ProductDetailScraper(BaseScraper):
                     time.sleep(delay)
             request_times.append(time.time())
 
+        # Ensure batches directory exists
+        batches_dir = os.path.join(os.path.dirname(__file__), '..', 'batches')
+        os.makedirs(batches_dir, exist_ok=True)
         def save_batch_to_file(batch_data, batch_num=None):
-            """Save batch to file with better naming"""
             if not batch_data:
                 return
-            
             timestamp = int(time.time())
             if batch_num is None:
                 batch_num = timestamp
-            
             batch_filename = f"batch_{batch_num}_{len(batch_data)}.jsonl"
+            batch_path = os.path.join(batches_dir, batch_filename)
             try:
-                with open(batch_filename, 'w', encoding='utf-8') as batch_file:
+                with open(batch_path, 'w', encoding='utf-8') as batch_file:
                     for product in batch_data:
                         batch_file.write(json.dumps(product) + '\n')
-                
-                # Also save to data directory for backup
-                data_batch_filename = os.path.join("espscraper/data", batch_filename)
-                with open(data_batch_filename, 'w', encoding='utf-8') as batch_file:
-                    for product in batch_data:
-                        batch_file.write(json.dumps(product) + '\n')
-                
             except Exception as e:
                 logging.error(f"❌ Failed to save batch file: {e}")
 
@@ -977,10 +998,25 @@ class ProductDetailScraper(BaseScraper):
                         if not element_found:
                             continue
                     
+                    # After loading the product page and before scraping:
+                    if 'page=Login' in self.driver.current_url or 'SessionStatus=NotValid' in self.driver.current_url:
+                        logging.error(f"Login redirect detected for Product ID {product_id}. Triggering re-login and retry.")
+                        self.login(force_relogin=True)
+                        # Retry this product once
+                        try:
+                            self.driver.get(url)
+                            if 'page=Login' in self.driver.current_url or 'SessionStatus=NotValid' in self.driver.current_url:
+                                logging.error(f"Login failed again for Product ID {product_id}. Skipping.")
+                                continue
+                        except Exception as e:
+                            logging.error(f"Error retrying login for Product ID {product_id}: {e}")
+                            continue
+
                     scraped_data = self.scrape_product_detail_page()
                     scraped_data['SourceURL'] = url
                     
                     # Append to the main output file (adds to end of file)
+                    scraped_data['scrapedDate'] = datetime.datetime.utcnow().isoformat() + 'Z'
                     f_out.write(json.dumps(scraped_data) + '\n')
                     f_out.flush()  # Ensure data is written immediately
                     products_scraped += 1
@@ -1064,7 +1100,7 @@ class ProductDetailScraper(BaseScraper):
                 self.login(force_relogin=False)
                 
                 product_links_map = {str(link.get('id')): link for link in product_links}
-                scraped_ids = self.get_scraped_ids()
+                scraped_ids = checkpoint_manager.get_scraped_ids()
                 
                 with open(self.OUTPUT_FILE, 'a', encoding='utf-8') as f_out:
                     for product_id in failed_ids:

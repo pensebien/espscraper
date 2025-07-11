@@ -191,6 +191,23 @@ jobs:
           WP_BASIC_AUTH_PASS: ${{ secrets.WP_BASIC_AUTH_PASS }}
           WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
 
+      - name: 🏁 Final Import Pass to WordPress
+        run: |
+          python3 -m espscraper.production_main --final-import --headless
+        env:
+          ESP_USERNAME: ${{ secrets.ESP_USERNAME }}
+          ESP_PASSWORD: ${{ secrets.ESP_PASSWORD }}
+          PRODUCTS_URL: ${{ secrets.PRODUCTS_URL }}
+          SEARCH_API_URL: ${{ secrets.SEARCH_API_URL }}
+          GOTO_PAGE_API_URL: ${{ secrets.GOTO_PAGE_API_URL }}
+          WP_API_URL: ${{ github.event.inputs.api_url }}
+          WP_API_KEY: ${{ github.event.inputs.api_key }}
+          WP_EXISTING_PRODUCTS_URL: ${{ github.event.inputs.wp_api_url }}
+          WP_EXISTING_PRODUCTS_KEY: ${{ github.event.inputs.wp_api_key }}
+          WP_BASIC_AUTH_USER: ${{ secrets.WP_BASIC_AUTH_USER }}
+          WP_BASIC_AUTH_PASS: ${{ secrets.WP_BASIC_AUTH_PASS }}
+          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
+
       - name: 🔧 Create minimal batch file if none exist
         run: |
           echo "=== Checking for batch files after scraper run ==="

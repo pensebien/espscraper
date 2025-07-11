@@ -10,6 +10,7 @@ import argparse
 import traceback
 from datetime import datetime
 from pathlib import Path
+import json
 
 # Add the parent directory to the path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -17,6 +18,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from espscraper.session_manager import SessionManager
 from espscraper.scrape_product_details import ProductDetailScraper
 from espscraper.api_scraper import ApiScraper
+from espscraper.checkpoint_manager import CheckpointManager
 from production_config import validate_production_config, get_production_config, get_chrome_options
 
 def setup_logging(log_file=None, log_level='INFO'):
@@ -70,31 +72,27 @@ def validate_env_vars(required_vars):
             print(f"⚠️ {msg} (not fatal in manual/dev mode)")
 
 def run_scraper(args):
-    """Run the scraper with production settings"""
+    """Run the scraper: collect all product data, no deduplication or import."""
     logger = logging.getLogger(__name__)
     config = get_production_config()
-    
     try:
-        # Setup session manager
         session_manager = SessionManager(
             cookie_file='tmp/session_cookies.json',
             state_file='tmp/session_state.json',
             headless=config['HEADLESS']
         )
-        
         # Always collect latest product links before scraping
         logger.info("Starting link collection (always-on)...")
         api_scraper = ApiScraper(session_manager)
         status = api_scraper.collect_product_links(
             force_relogin=args.force_relogin,
             limit=args.limit,
-            new_only=False,  # We'll filter after collecting
+            new_only=False,  # Always collect all links
             detail_output_file=args.output_file
         )
         if status:
             logger.info(f"Link collection completed: {status}")
-        
-        # Setup detail scraper
+        # Scrape all product details (no deduplication, just collect data)
         scraper = ProductDetailScraper(
             session_manager,
             headless=config['HEADLESS'],
@@ -106,70 +104,126 @@ def run_scraper(args):
             batch_retry_limit=config['BATCH_RETRY_LIMIT'],
             debug_mode=config['DEBUG_MODE']
         )
-        
-        # Run scraping with mode
-        logger.info(f"Starting product detail scraping in mode: {args.mode}")
-        scraper.scrape_all_details(force_relogin=args.force_relogin, mode=args.mode)
-        logger.info("Scraping completed successfully")
-        
+        logger.info("Starting product detail scraping (data collection only)...")
+        scraper.scrape_all_details(force_relogin=args.force_relogin, mode='override')
+        logger.info("Scraping completed successfully (data collection only)")
         return True
-        
     except Exception as e:
         logger.error(f"Scraping failed: {e}")
         logger.error(traceback.format_exc())
         return False
 
-def main():
-    """Main entry point for production"""
-    parser = argparse.ArgumentParser(description="ESP Scraper - Production Version")
-    parser.add_argument('--limit', type=int, default=None, help='Limit number of products to scrape')
-    parser.add_argument('--headless', action='store_true', help='Run in headless mode')
-    parser.add_argument('--force-relogin', action='store_true', help='Force fresh login')
-    parser.add_argument('--output-file', type=str, default=None, help='Output file for scraped details')
-    parser.add_argument('--links-file', type=str, default=None, help='Input links file')
-    parser.add_argument('--collect-links', action='store_true', help='Collect new links before scraping')
-    parser.add_argument('--new-only', action='store_true', help='Only collect links for new products')
-    parser.add_argument('--log-file', type=str, default=None, help='Log file path')
-    parser.add_argument('--log-level', type=str, default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'])
-    parser.add_argument('--validate-only', action='store_true', help='Only validate configuration')
-    parser.add_argument('--mode', type=str, default='scrape', choices=['scrape', 'override', 'sync'], help='Smart scraping mode: scrape (new only), override (all), sync (new+updates)')
-    
-    args = parser.parse_args()
-    
-    # Setup logging
-    logger = setup_logging(args.log_file, args.log_level)
-    logger.info("ESP Scraper starting...")
-    
-    # Conditionally validate environment variables
-    required_vars = [
-        "ESP_USERNAME", "ESP_PASSWORD", "PRODUCTS_URL"
-    ]
-    # WordPress variables are optional for now
-    optional_vars = ["WP_API_URL", "WP_API_KEY"]
+def run_import(args):
+    """Run the import: compare canonical data to store and upload missing/updated products."""
+    logger = logging.getLogger(__name__)
+    config = get_production_config()
     try:
-        validate_env_vars(required_vars)
-    except RuntimeError as e:
-        logger.error(str(e))
-        sys.exit(1)
-    
-    if args.validate_only:
-        logger.info("Configuration validation completed successfully")
-        return
-    
-    # Run scraper
-    start_time = datetime.now()
-    success = run_scraper(args)
-    end_time = datetime.now()
-    
-    duration = end_time - start_time
-    logger.info(f"Scraping completed in {duration}")
-    
-    if success:
-        logger.info("✅ Scraping completed successfully")
-        sys.exit(0)
+        # Load canonical product details
+        details_file = args.output_file or os.path.join(os.path.dirname(__file__), 'data', 'final_product_details.jsonl')
+        checkpoint_manager = CheckpointManager(details_file, id_fields=['ProductID'])
+        scraped_ids, last_valid_id, last_valid_line = checkpoint_manager.get_scraped_ids_and_checkpoint()
+        # Fetch existing products from store
+        api_url = os.getenv("WP_API_URL")
+        api_key = os.getenv("WP_API_KEY")
+        session_manager = SessionManager(
+            cookie_file='tmp/session_cookies.json',
+            state_file='tmp/session_state.json',
+            headless=config['HEADLESS']
+        )
+        scraper = ProductDetailScraper(session_manager)
+        if api_url and api_key:
+            if api_url.endswith('/upload'):
+                existing_url = api_url.replace('/upload', '/existing-products')
+            else:
+                existing_url = api_url.rstrip('/') + '/existing-products'
+            logger.info(f"Fetching existing products from {existing_url}")
+            existing_product_ids, _ = scraper.fetch_existing_products(existing_url, api_key)
+        else:
+            logger.error("WordPress integration not configured. Cannot import.")
+            return False
+        # Compare and upload missing/updated products
+        to_import = []
+        with open(details_file, 'r') as f:
+            for line in f:
+                try:
+                    product = json.loads(line)
+                    pid = product.get('ProductID')
+                    if pid and pid not in existing_product_ids:
+                        to_import.append(product)
+                except Exception:
+                    continue
+        logger.info(f"Importing {len(to_import)} products to WordPress...")
+        for product in to_import:
+            scraper.post_single_product_to_wordpress(product, api_url, api_key)
+        logger.info("Import completed.")
+        return True
+    except Exception as e:
+        logger.error(f"Import failed: {e}")
+        logger.error(traceback.format_exc())
+        return False
+
+def run_final_import(args):
+    """Import all products from final_product_details.jsonl to WordPress, deduplicating by ProductID and last-modified."""
+    logger = logging.getLogger(__name__)
+    details_file = args.output_file or os.path.join(os.path.dirname(__file__), 'data', 'final_product_details.jsonl')
+    checkpoint_manager = CheckpointManager(details_file, id_fields=['ProductID'])
+    api_url = os.getenv("WP_API_URL")
+    api_key = os.getenv("WP_API_KEY")
+    if not api_url or not api_key:
+        logger.error("WordPress integration not configured. Cannot import.")
+        return False
+
+    session_manager = SessionManager()
+    scraper = ProductDetailScraper(session_manager)
+    # Fetch existing products from store
+    if api_url.endswith('/upload'):
+        existing_url = api_url.replace('/upload', '/existing-products')
     else:
-        logger.error("❌ Scraping failed")
-        sys.exit(1)
+        existing_url = api_url.rstrip('/') + '/existing-products'
+    logger.info(f"Fetching existing products from {existing_url}")
+    existing_product_ids, _ = scraper.fetch_existing_products(existing_url, api_key)
+
+    # Import missing/updated products
+    to_import = []
+    with open(details_file, 'r') as f:
+        for line in f:
+            try:
+                product = json.loads(line)
+                pid = product.get('ProductID')
+                if pid and pid not in existing_product_ids:
+                    to_import.append(product)
+            except Exception:
+                continue
+    logger.info(f"Final import: {len(to_import)} products to import to WordPress...")
+    batch_size = 10
+    for i in range(0, len(to_import), batch_size):
+        batch = to_import[i:i+batch_size]
+        scraper.post_batch_to_wordpress(batch, api_url, api_key)
+    logger.info("Final import pass complete.")
+    return True
+
+def main():
+    parser = argparse.ArgumentParser(description="ESP Scraper - Production Version (separated scrape/import)")
+    subparsers = parser.add_subparsers(dest='command', required=True)
+    # Scrape command
+    scrape_parser = subparsers.add_parser('scrape', help='Collect all product data (no import)')
+    scrape_parser.add_argument('--limit', type=int, default=None)
+    scrape_parser.add_argument('--headless', action='store_true')
+    scrape_parser.add_argument('--force-relogin', action='store_true')
+    scrape_parser.add_argument('--output-file', type=str, default=None)
+    scrape_parser.add_argument('--links-file', type=str, default=None)
+    # Import command
+    import_parser = subparsers.add_parser('import', help='Import missing/updated products to WordPress')
+    import_parser.add_argument('--output-file', type=str, default=None)
+    parser.add_argument('--final-import', action='store_true', help='Run final import pass to WordPress after scraping')
+    args = parser.parse_args()
+    logger = setup_logging(None, 'INFO')
+    if args.command == 'scrape':
+        run_scraper(args)
+    elif args.command == 'import':
+        run_import(args)
+    if args.final_import:
+        run_final_import(args)
 
 if __name__ == "__main__":
     main() 

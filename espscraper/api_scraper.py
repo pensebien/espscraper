@@ -17,6 +17,8 @@ import urllib.parse
 import argparse
 import math
 import logging
+import datetime
+from espscraper.checkpoint_manager import CheckpointManager
 
 # --- CONFIGURATION ---
 # Don't load .env file in production - use environment variables directly
@@ -53,6 +55,10 @@ class ApiScraper(BaseScraper):
         # Ensure data directory exists
         data_dir = os.path.join(os.path.dirname(__file__), 'data')
         os.makedirs(data_dir, exist_ok=True)
+        # Ensure batches directory exists if needed
+        # batches_dir = os.path.join(os.path.dirname(__file__), '..', 'batches')
+        # os.makedirs(batches_dir, exist_ok=True)
+        # Remove any batch file writing to data_dir or current directory
         self.OUTPUT_FILE = os.getenv("OUTPUT_FILE", os.path.join(data_dir, "api_scraped_links.jsonl"))
         self.TOTAL_PAGES_TO_SCRAPE = int(os.getenv("TOTAL_PAGES_TO_SCRAPE", 100))
         # Improved required variable check
@@ -88,8 +94,8 @@ class ApiScraper(BaseScraper):
         return products
 
     def collect_product_links(self, force_relogin=False, pages=None, limit=None, new_only=False, detail_output_file=None, resume_missing=False):
-        checkpoint_file = self.OUTPUT_FILE.replace('.jsonl', '.checkpoint.txt')
-        metadata_file = self.OUTPUT_FILE.replace('.jsonl', '.meta.json')
+        checkpoint_manager = CheckpointManager(self.OUTPUT_FILE)
+        scraped_ids, last_valid_product_id, last_valid_line = checkpoint_manager.get_scraped_ids_and_checkpoint()
         batch_size = 3  # Reduced batch size for better rate limiting
         delay = 2  # Increased delay between page requests
         batch_delay = 5  # Longer delay between batches
@@ -219,7 +225,7 @@ class ApiScraper(BaseScraper):
                 total_pages_dynamic = self.TOTAL_PAGES_TO_SCRAPE
             # Update metadata file with latest resultsTotal
             try:
-                with open(metadata_file, 'w') as meta_f:
+                with open(checkpoint_manager.metadata_file, 'w') as meta_f:
                     json.dump({
                         'ResultsPerPage': results_per_page,
                         'resultsTotal': results_total,
@@ -259,7 +265,7 @@ class ApiScraper(BaseScraper):
                     total_pages_dynamic = self.TOTAL_PAGES_TO_SCRAPE
                 # Update metadata file with latest resultsTotal
                 try:
-                    with open(metadata_file, 'w') as meta_f:
+                    with open(checkpoint_manager.metadata_file, 'w') as meta_f:
                         json.dump({
                             'ResultsPerPage': results_per_page,
                             'resultsTotal': results_total,
@@ -291,6 +297,7 @@ class ApiScraper(BaseScraper):
                         continue  # skip already scraped
                     if pid and str(pid) in collected_ids:
                         continue  # skip already collected in output file
+                    product['collectedDate'] = datetime.datetime.utcnow().isoformat() + 'Z'
                     with open(self.OUTPUT_FILE, 'a') as f_out:
                         f_out.write(json.dumps(product) + '\n')
                     collected_ids.add(str(pid))
@@ -314,14 +321,9 @@ class ApiScraper(BaseScraper):
         total_pages = total_pages_dynamic
         if resume_missing:
             # Resume from checkpoint page + 1
-            if os.path.exists(checkpoint_file):
-                with open(checkpoint_file, 'r') as f:
-                    try:
-                        last_page = int(f.read().strip())
-                        start_page = last_page + 1
-                        logging.info(f"🔄 Resuming from page {start_page} (last completed: {last_page}) [RESUME-MISSING MODE]")
-                    except Exception:
-                        start_page = 1
+            if checkpoint_manager.is_resume_needed():
+                start_page = checkpoint_manager.get_last_completed_page() + 1
+                logging.info(f"🔄 Resuming from page {start_page} (last completed: {checkpoint_manager.get_last_completed_page()}) [RESUME-MISSING MODE]")
             else:
                 start_page = 1
             current_page = start_page
@@ -335,8 +337,7 @@ class ApiScraper(BaseScraper):
                     new_links_collected += page_new_links
                     time.sleep(delay)
                     # Save checkpoint after each page
-                    with open(checkpoint_file, 'w') as f:
-                        f.write(str(page_num))
+                    checkpoint_manager.update_checkpoint(page_num)
                     # Update heartbeat every 20 seconds
                     if time.time() - last_heartbeat > 20:
                         update_heartbeat()
@@ -344,13 +345,13 @@ class ApiScraper(BaseScraper):
                     if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
                         logging.warning(f"⚠️ Limit of {limit} reached, or all products collected.")
                         logging.info(f"✅ Link collection complete up to page {page_num}.")
-                        logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+                        logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_manager.checkpoint_file}'.")
                         logging.info(f"✅ Collected {new_links_collected} new product links.")
                         return {'all_links_collected': False, 'new_links_collected': new_links_collected}
                 current_page = batch_end
                 time.sleep(batch_delay)
             logging.info(f"✅ Link collection complete up to page {current_page-1}.")
-            logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+            logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_manager.checkpoint_file}'.")
             logging.info(f"✅ Collected {new_links_collected} new product links.")
             return {'all_links_collected': False, 'new_links_collected': new_links_collected}
         else:
@@ -365,8 +366,7 @@ class ApiScraper(BaseScraper):
                 new_links_collected += page_new_links
                 time.sleep(delay)
                 # Save checkpoint after each page
-                with open(checkpoint_file, 'w') as f:
-                    f.write(str(page_num))
+                checkpoint_manager.update_checkpoint(page_num)
                 # Update heartbeat every 20 seconds
                 if time.time() - last_heartbeat > 20:
                     update_heartbeat()
@@ -374,7 +374,7 @@ class ApiScraper(BaseScraper):
                 if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
                     logging.warning(f"⚠️ Limit of {limit} reached, or all products collected.")
                     logging.info(f"✅ Link collection complete up to page {page_num}.")
-                    logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+                    logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_manager.checkpoint_file}'.")
                     logging.info(f"✅ Collected {new_links_collected} new product links.")
                     return {'all_links_collected': False, 'new_links_collected': new_links_collected}
             current_page = 3
@@ -388,8 +388,7 @@ class ApiScraper(BaseScraper):
                     new_links_collected += page_new_links
                     time.sleep(delay)
                     # Save checkpoint after each page
-                    with open(checkpoint_file, 'w') as f:
-                        f.write(str(page_num))
+                    checkpoint_manager.update_checkpoint(page_num)
                     # Update heartbeat every 20 seconds
                     if time.time() - last_heartbeat > 20:
                         update_heartbeat()
@@ -397,13 +396,13 @@ class ApiScraper(BaseScraper):
                     if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
                         logging.warning(f"⚠️ Limit of {limit} reached, or all products collected.")
                         logging.info(f"✅ Link collection complete up to page {page_num}.")
-                        logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+                        logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_manager.checkpoint_file}'.")
                         logging.info(f"✅ Collected {new_links_collected} new product links.")
                         return {'all_links_collected': False, 'new_links_collected': new_links_collected}
                 current_page = batch_end
                 time.sleep(batch_delay)
             logging.info(f"✅ Link collection complete up to page {current_page-1}.")
-            logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+            logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_manager.checkpoint_file}'.")
             logging.info(f"✅ Collected {new_links_collected} new product links.")
             return {'all_links_collected': False, 'new_links_collected': new_links_collected}
 
