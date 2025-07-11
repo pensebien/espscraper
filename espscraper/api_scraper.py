@@ -55,8 +55,17 @@ class ApiScraper(BaseScraper):
         os.makedirs(data_dir, exist_ok=True)
         self.OUTPUT_FILE = os.getenv("OUTPUT_FILE", os.path.join(data_dir, "api_scraped_links.jsonl"))
         self.TOTAL_PAGES_TO_SCRAPE = int(os.getenv("TOTAL_PAGES_TO_SCRAPE", 100))
-        if not all([self.USERNAME, self.PASSWORD, self.SEARCH_API_URL, self.GOTO_PAGE_API_URL, self.PRODUCTS_URL]):
-            raise ValueError("All required .env variables must be set.")
+        # Improved required variable check
+        required_vars = {
+            "ESP_USERNAME": self.USERNAME,
+            "ESP_PASSWORD": self.PASSWORD,
+            "SEARCH_API_URL": self.SEARCH_API_URL,
+            "GOTO_PAGE_API_URL": self.GOTO_PAGE_API_URL,
+            "PRODUCTS_URL": self.PRODUCTS_URL,
+        }
+        missing = [k for k, v in required_vars.items() if not v]
+        if missing:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
 
     def extract_products_from_json(self, response_data):
         products = []
