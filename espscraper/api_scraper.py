@@ -119,27 +119,27 @@ class ApiScraper(BaseScraper):
         already_scraped_ids = set()
         if new_only and detail_output_file and os.path.exists(detail_output_file):
             with open(detail_output_file, 'r') as f:
-                for line in f:
+                for i, line in enumerate(f, 1):
                     try:
                         data = json.loads(line)
-                        pid = data.get('productId') or data.get('ProductID')or data.get('id')
+                        pid = data.get('productId') or data.get('ProductID') or data.get('id')
                         if pid:
                             already_scraped_ids.add(str(pid))
-                    except Exception:
-                        continue
+                    except Exception as e:
+                        logging.error(f"Skipping invalid JSON line {i} in {detail_output_file}: {e} | Content: {line.strip()}")
             logging.info(f"🔎 Loaded {len(already_scraped_ids)} already-scraped product IDs from {detail_output_file}")
         # Load all collected IDs from output file (for deduplication)
         collected_ids = set()
         if os.path.exists(self.OUTPUT_FILE):
             with open(self.OUTPUT_FILE, 'r') as f:
-                for line in f:
+                for i, line in enumerate(f, 1):
                     try:
                         data = json.loads(line)
                         pid = data.get('id') or data.get('productId') or data.get('ProductID')
                         if pid:
                             collected_ids.add(str(pid))
-                    except Exception:
-                        continue
+                    except Exception as e:
+                        logging.error(f"Skipping invalid JSON line {i} in {self.OUTPUT_FILE}: {e} | Content: {line.strip()}")
         # Always fetch first page for session and ResultsTotal
         def get_session_and_ids():
             cookies, page_key, search_id = self.session_manager.load_state()

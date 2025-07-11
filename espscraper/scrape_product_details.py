@@ -211,13 +211,14 @@ class ProductDetailScraper(BaseScraper):
 
     def read_product_links(self):
         links = []
-        if os.path.exists(self.LINKS_FILE):
-            with open(self.LINKS_FILE, 'r') as f:
-                for line in f:
+        if not os.path.exists(self.LINKS_FILE):
+            return links
+        with open(self.LINKS_FILE, 'r', encoding='utf-8') as f:
+            for i, line in enumerate(f, 1):
+                try:
                     links.append(json.loads(line))
-            logging.info(f"📄 Read {len(links)} product links from {self.LINKS_FILE}.")
-        else:
-            logging.error(f"❌ ERROR: Links file not found at {self.LINKS_FILE}")
+                except Exception as e:
+                    logging.error(f"Skipping invalid JSON line {i} in {self.LINKS_FILE}: {e} | Content: {line.strip()}")
         return links
 
     def get_related_products(self, product_id, soup=None):
