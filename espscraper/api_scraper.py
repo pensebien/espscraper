@@ -43,12 +43,19 @@ class ApiScraper(BaseScraper):
         self.GOTO_PAGE_API_URL = os.getenv("GOTO_PAGE_API_URL")
         self.PRODUCTS_URL = os.getenv("PRODUCTS_URL")
         self.PRODUCT_URL_TEMPLATE = os.getenv("PRODUCT_URL_TEMPLATE")
+        if not self.PRODUCT_URL_TEMPLATE:
+            # Use ESP Web product details URL as default if not set
+            self.PRODUCT_URL_TEMPLATE = (
+                "https://espweb.asicentral.com/Default.aspx?appCode=WESP&appVersion=4.1.0"
+                "&page=ProductDetails&referrerPage=ProductResults&referrerModule=PRDRES&refModSufx=Generic"
+                "&PCUrl=1&productID={product_id}&autoLaunchVS=0&tab=list"
+            )
         # Ensure data directory exists
         data_dir = os.path.join(os.path.dirname(__file__), 'data')
         os.makedirs(data_dir, exist_ok=True)
         self.OUTPUT_FILE = os.getenv("OUTPUT_FILE", os.path.join(data_dir, "api_scraped_links.jsonl"))
         self.TOTAL_PAGES_TO_SCRAPE = int(os.getenv("TOTAL_PAGES_TO_SCRAPE", 100))
-        if not all([self.USERNAME, self.PASSWORD, self.SEARCH_API_URL, self.GOTO_PAGE_API_URL, self.PRODUCTS_URL, self.PRODUCT_URL_TEMPLATE]):
+        if not all([self.USERNAME, self.PASSWORD, self.SEARCH_API_URL, self.GOTO_PAGE_API_URL, self.PRODUCTS_URL]):
             raise ValueError("All required .env variables must be set.")
 
     def extract_products_from_json(self, response_data):
