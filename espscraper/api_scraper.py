@@ -95,6 +95,26 @@ class ApiScraper(BaseScraper):
         delay = 2  # Increased delay between page requests
         batch_delay = 5  # Longer delay between batches
         max_requests_per_minute = 20  # Rate limiting
+        request_times = []
+
+        def check_rate_limit():
+            """Check if we're within rate limits"""
+            current_time = time.time()
+            # Remove requests older than 1 minute
+            request_times[:] = [t for t in request_times if current_time - t < 60]
+            if len(request_times) >= max_requests_per_minute:
+                wait_time = 60 - (current_time - request_times[0])
+                if wait_time > 0:
+                    logging.warning(f"⏸️ Rate limit reached. Waiting {wait_time:.1f} seconds...")
+                    time.sleep(wait_time)
+                    return check_rate_limit()  # Recursive check
+            return True
+
+        def make_rate_limited_request(session, url, payload):
+            """Make a request with rate limiting"""
+            check_rate_limit()
+            request_times.append(time.time())
+            return session.post(url, json=payload, timeout=30)
         # Load already-scraped product IDs if new_only is set
         already_scraped_ids = set()
         if new_only and detail_output_file and os.path.exists(detail_output_file):
@@ -219,29 +239,6 @@ class ApiScraper(BaseScraper):
             except Exception as e2:
                 logging.error(f"❌ Initial SearchProduct request failed after login: {e2}")
                 return
-        # Rate limiting mechanism
-        request_times = []
-        
-        def check_rate_limit():
-            """Check if we're within rate limits"""
-            current_time = time.time()
-            # Remove requests older than 1 minute
-            request_times[:] = [t for t in request_times if current_time - t < 60]
-            
-            if len(request_times) >= max_requests_per_minute:
-                wait_time = 60 - (current_time - request_times[0])
-                if wait_time > 0:
-                    logging.warning(f"⏸️ Rate limit reached. Waiting {wait_time:.1f} seconds...")
-                    time.sleep(wait_time)
-                    return check_rate_limit()  # Recursive check
-            return True
-        
-        def make_rate_limited_request(session, url, payload):
-            """Make a request with rate limiting"""
-            check_rate_limit()
-            request_times.append(time.time())
-            return session.post(url, json=payload, timeout=30)
-        
         # Helper function to fetch and write new links for a page
         def fetch_and_write_page(page_num, total_pages, results_total):
             goto_payload = {

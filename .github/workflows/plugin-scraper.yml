@@ -11,7 +11,31 @@ on:
         description: 'Resume previous run'
         required: false
         default: 'false'
-        
+      mode:
+        description: 'Scraping mode (scrape, override, sync)'
+        required: false
+        default: 'scrape'
+      existing_products:
+        description: 'Existing product IDs (JSON)'
+        required: false
+        default: ''
+      api_url:
+        description: 'API URL for uploads'
+        required: false
+        default: ''
+      api_key:
+        description: 'API key for uploads'
+        required: false
+        default: ''
+      wp_api_url:
+        description: 'WP existing-products endpoint'
+        required: false
+        default: ''
+      wp_api_key:
+        description: 'WP API key'
+        required: false
+        default: ''
+
 permissions:
   contents: write
 
@@ -149,15 +173,18 @@ jobs:
         run: |
           python3 -m espscraper.production_main \
             --limit ${{ github.event.inputs.limit || '1000' }} \
-            --headless
+            --headless \
+            --mode ${{ github.event.inputs.mode || 'scrape' }}
         env:
           ESP_USERNAME: ${{ secrets.ESP_USERNAME }}
           ESP_PASSWORD: ${{ secrets.ESP_PASSWORD }}
           PRODUCTS_URL: ${{ secrets.PRODUCTS_URL }}
           SEARCH_API_URL: ${{ secrets.SEARCH_API_URL }}
           GOTO_PAGE_API_URL: ${{ secrets.GOTO_PAGE_API_URL }}
-          WP_API_URL: ${{ env.WP_API_URL }}
-          WP_API_KEY: ${{ env.WP_API_KEY }}
+          WP_API_URL: ${{ github.event.inputs.api_url }}
+          WP_API_KEY: ${{ github.event.inputs.api_key }}
+          WP_EXISTING_PRODUCTS_URL: ${{ github.event.inputs.wp_api_url }}
+          WP_EXISTING_PRODUCTS_KEY: ${{ github.event.inputs.wp_api_key }}
 
       - name: 🔧 Create minimal batch file if none exist
         run: |
