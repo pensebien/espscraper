@@ -115,6 +115,20 @@ class ApiScraper(BaseScraper):
             check_rate_limit()
             request_times.append(time.time())
             return session.post(url, json=payload, timeout=30)
+
+        def extract_json_objects(text):
+            decoder = json.JSONDecoder()
+            idx = 0
+            length = len(text)
+            while idx < length:
+                try:
+                    obj, end = decoder.raw_decode(text, idx)
+                    yield obj
+                    idx = end
+                    while idx < length and text[idx] in ' \r\n\t':
+                        idx += 1
+                except json.JSONDecodeError:
+                    break
         # Load already-scraped product IDs if new_only is set
         already_scraped_ids = set()
         if new_only and detail_output_file and os.path.exists(detail_output_file):
@@ -126,7 +140,16 @@ class ApiScraper(BaseScraper):
                         if pid:
                             already_scraped_ids.add(str(pid))
                     except Exception as e:
-                        logging.error(f"Skipping invalid JSON line {i} in {detail_output_file}: {e} | Content: {line.strip()}")
+                        found_any = False
+                        for obj in extract_json_objects(line):
+                            pid = obj.get('productId') or obj.get('ProductID') or obj.get('id')
+                            if pid:
+                                already_scraped_ids.add(str(pid))
+                                found_any = True
+                        if found_any:
+                            logging.warning(f"Line {i} in {detail_output_file} contained multiple JSON objects. Used fallback parser.")
+                        else:
+                            logging.error(f"Skipping invalid JSON line {i} in {detail_output_file}: {e} | Content: {line.strip()}")
             logging.info(f"🔎 Loaded {len(already_scraped_ids)} already-scraped product IDs from {detail_output_file}")
         # Load all collected IDs from output file (for deduplication)
         collected_ids = set()
@@ -139,7 +162,16 @@ class ApiScraper(BaseScraper):
                         if pid:
                             collected_ids.add(str(pid))
                     except Exception as e:
-                        logging.error(f"Skipping invalid JSON line {i} in {self.OUTPUT_FILE}: {e} | Content: {line.strip()}")
+                        found_any = False
+                        for obj in extract_json_objects(line):
+                            pid = obj.get('id') or obj.get('productId') or obj.get('ProductID')
+                            if pid:
+                                collected_ids.add(str(pid))
+                                found_any = True
+                        if found_any:
+                            logging.warning(f"Line {i} in {self.OUTPUT_FILE} contained multiple JSON objects. Used fallback parser.")
+                        else:
+                            logging.error(f"Skipping invalid JSON line {i} in {self.OUTPUT_FILE}: {e} | Content: {line.strip()}")
         # Always fetch first page for session and ResultsTotal
         def get_session_and_ids():
             cookies, page_key, search_id = self.session_manager.load_state()

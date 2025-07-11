@@ -168,7 +168,7 @@ jobs:
           echo "WP_API_URL=$(jq -r .api_url params.json)" >> $GITHUB_ENV
           echo "WP_API_KEY=$(jq -r .api_key params.json)" >> $GITHUB_ENV
           echo "WordPress integration status: $(jq -r .api_url params.json | grep -q '^$' && echo 'Not configured' || echo 'Configured')"
-
+# Added the neccessary weblink using LocalWP livelink 
       - name: 🚀 Run ESP scraper (streaming upload + batch save)
         run: |
           python3 -m espscraper.production_main \

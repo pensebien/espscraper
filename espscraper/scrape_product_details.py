@@ -210,15 +210,39 @@ class ProductDetailScraper(BaseScraper):
             logging.error(f"⚠️ Error loading cookies into driver: {e}")
 
     def read_product_links(self):
+        import json
         links = []
         if not os.path.exists(self.LINKS_FILE):
             return links
+        def extract_json_objects(text):
+            decoder = json.JSONDecoder()
+            idx = 0
+            length = len(text)
+            while idx < length:
+                try:
+                    obj, end = decoder.raw_decode(text, idx)
+                    yield obj
+                    idx = end
+                    while idx < length and text[idx] in ' \r\n\t':
+                        idx += 1
+                except json.JSONDecodeError:
+                    break
         with open(self.LINKS_FILE, 'r', encoding='utf-8') as f:
             for i, line in enumerate(f, 1):
                 try:
                     links.append(json.loads(line))
                 except Exception as e:
-                    logging.error(f"Skipping invalid JSON line {i} in {self.LINKS_FILE}: {e} | Content: {line.strip()}")
+                    # Fallback: try to extract multiple JSON objects from the line
+                    found_any = False
+                    for obj in extract_json_objects(line):
+                        links.append(obj)
+                        found_any = True
+                    if found_any:
+                        import logging
+                        logging.warning(f"Line {i} in {self.LINKS_FILE} contained multiple JSON objects. Used fallback parser.")
+                    else:
+                        import logging
+                        logging.error(f"Skipping invalid JSON line {i} in {self.LINKS_FILE}: {e} | Content: {line.strip()}")
         return links
 
     def get_related_products(self, product_id, soup=None):
