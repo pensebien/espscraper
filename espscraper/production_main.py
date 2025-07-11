@@ -122,6 +122,8 @@ def run_import(args):
         details_file = args.output_file or os.path.join(os.path.dirname(__file__), 'data', 'final_product_details.jsonl')
         checkpoint_manager = CheckpointManager(details_file, id_fields=['ProductID'])
         scraped_ids, last_valid_id, last_valid_line = checkpoint_manager.get_scraped_ids_and_checkpoint()
+        logger.info(f"Read {len(scraped_ids)} products from {details_file}.")
+        logger.debug(f"Sample scraped ProductIDs: {list(scraped_ids)[:10]}")
         # Fetch existing products from store
         api_url = os.getenv("WP_API_URL")
         api_key = os.getenv("WP_API_KEY")
@@ -138,6 +140,8 @@ def run_import(args):
                 existing_url = api_url.rstrip('/') + '/existing-products'
             logger.info(f"Fetching existing products from {existing_url}")
             existing_product_ids, _ = scraper.fetch_existing_products(existing_url, api_key)
+            logger.info(f"Fetched {len(existing_product_ids)} existing products from WordPress.")
+            logger.debug(f"Sample existing ProductIDs: {list(existing_product_ids)[:10]}")
         else:
             logger.error("WordPress integration not configured. Cannot import.")
             return False
@@ -150,11 +154,17 @@ def run_import(args):
                     pid = product.get('ProductID')
                     if pid and pid not in existing_product_ids:
                         to_import.append(product)
-                except Exception:
+                    else:
+                        logger.debug(f"Skipping ProductID {pid} (already exists in store)")
+                except Exception as e:
+                    logger.error(f"Error parsing product line: {e}")
                     continue
         logger.info(f"Importing {len(to_import)} products to WordPress...")
         for product in to_import:
-            scraper.post_single_product_to_wordpress(product, api_url, api_key)
+            logger.info(f"Importing ProductID: {product.get('ProductID')} Name: {product.get('Name')}")
+            response = scraper.post_single_product_to_wordpress(product, api_url, api_key, return_response=True)
+            if response is not None:
+                logger.info(f"WordPress API response: {getattr(response, 'status_code', 'N/A')} {getattr(response, 'text', str(response))}")
         logger.info("Import completed.")
         return True
     except Exception as e:

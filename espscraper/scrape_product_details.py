@@ -720,25 +720,32 @@ class ProductDetailScraper(BaseScraper):
         # Matches $7.88, 7.88, 2.70, etc.
         return bool(re.match(r'^\$?\d+(\.\d+)?$', text.strip()))
 
-    def post_single_product_to_wordpress(self, product, api_url, api_key, retries=2):
+    def post_single_product_to_wordpress(self, product, api_url, api_key, retries=2, return_response=False):
         """
         Send a single product immediately to WordPress for live streaming.
+        If return_response is True, return the response object for debugging.
         """
         if not product or not api_url or not api_key:
-            return
+            return None
         jsonl_data = json.dumps(product) + '\n'
         files = {'file': ('single_product.jsonl', jsonl_data)}
         headers = {'Authorization': f'Bearer {api_key}'}
         for attempt in range(1, retries+1):
             try:
+                logging.info(f"Posting product {product.get('ProductID')} to {api_url} (attempt {attempt})")
                 response = requests.post(api_url, files=files, headers=headers, timeout=10)
+                logging.info(f"Response: {response.status_code} {response.text}")
                 response.raise_for_status()
                 logging.info(f"✅ Live streamed single product to WordPress.")
+                if return_response:
+                    return response
                 return
             except Exception as e:
                 logging.error(f"❌ Failed to live stream product to WordPress (attempt {attempt}) for Product ID {product.get('ProductID', 'N/A')}: {e}")
                 if attempt == retries:
                     logging.error(f"❌ Giving up on live streaming Product ID {product.get('ProductID', 'N/A')}")
+        if return_response:
+            return None
 
     def post_batch_to_wordpress(self, batch, api_url, api_key):
         """
