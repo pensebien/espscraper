@@ -88,7 +88,6 @@ class ApiScraper(BaseScraper):
         return products
 
     def collect_product_links(self, force_relogin=False, pages=None, limit=None, new_only=False, detail_output_file=None, resume_missing=False):
-        import os
         checkpoint_file = self.OUTPUT_FILE.replace('.jsonl', '.checkpoint.txt')
         metadata_file = self.OUTPUT_FILE.replace('.jsonl', '.meta.json')
         batch_size = 3  # Reduced batch size for better rate limiting
@@ -301,6 +300,14 @@ class ApiScraper(BaseScraper):
             except Exception as e:
                 logging.error(f"❌ Request for page {page_num} failed: {e}")
                 return 0
+        # Heartbeat file logic
+        batch_dir = os.path.join(os.path.dirname(__file__), 'data')
+        heartbeat_file = os.path.join(batch_dir, 'scraper_heartbeat.txt')
+        def update_heartbeat():
+            with open(heartbeat_file, 'w') as hb:
+                hb.write(str(time.time()))
+        update_heartbeat()  # Initial heartbeat
+        last_heartbeat = time.time()
         # Main collection logic
         new_links_collected = 0
         pages_processed = set()
@@ -330,6 +337,10 @@ class ApiScraper(BaseScraper):
                     # Save checkpoint after each page
                     with open(checkpoint_file, 'w') as f:
                         f.write(str(page_num))
+                    # Update heartbeat every 20 seconds
+                    if time.time() - last_heartbeat > 20:
+                        update_heartbeat()
+                        last_heartbeat = time.time()
                     if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
                         logging.warning(f"⚠️ Limit of {limit} reached, or all products collected.")
                         logging.info(f"✅ Link collection complete up to page {page_num}.")
@@ -356,6 +367,10 @@ class ApiScraper(BaseScraper):
                 # Save checkpoint after each page
                 with open(checkpoint_file, 'w') as f:
                     f.write(str(page_num))
+                # Update heartbeat every 20 seconds
+                if time.time() - last_heartbeat > 20:
+                    update_heartbeat()
+                    last_heartbeat = time.time()
                 if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
                     logging.warning(f"⚠️ Limit of {limit} reached, or all products collected.")
                     logging.info(f"✅ Link collection complete up to page {page_num}.")
@@ -375,6 +390,10 @@ class ApiScraper(BaseScraper):
                     # Save checkpoint after each page
                     with open(checkpoint_file, 'w') as f:
                         f.write(str(page_num))
+                    # Update heartbeat every 20 seconds
+                    if time.time() - last_heartbeat > 20:
+                        update_heartbeat()
+                        last_heartbeat = time.time()
                     if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
                         logging.warning(f"⚠️ Limit of {limit} reached, or all products collected.")
                         logging.info(f"✅ Link collection complete up to page {page_num}.")

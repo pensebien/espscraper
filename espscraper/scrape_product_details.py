@@ -744,7 +744,7 @@ class ProductDetailScraper(BaseScraper):
         import os
         from requests.auth import HTTPBasicAuth
         wp_base_url = os.getenv("WP_BASE_URL")
-        headers = {"Authorization": f"Bearer {api_key}"}
+        headers = {"X-API-Key": api_key}
         username = os.getenv("WP_BASIC_AUTH_USER")
         password = os.getenv("WP_BASIC_AUTH_PASS")
         auth = HTTPBasicAuth(username, password) if username and password else None
@@ -771,6 +771,17 @@ class ProductDetailScraper(BaseScraper):
         self.login(force_relogin=force_relogin)
         product_links = self.read_product_links()
         scraped_ids = self.get_scraped_ids()
+        # Heartbeat file logic
+        data_dir = os.path.join(os.path.dirname(__file__), 'data')
+        heartbeat_file = os.path.join(data_dir, 'scraper_heartbeat.txt')
+        def update_heartbeat(status_text):
+            with open(heartbeat_file, 'w') as hb:
+                hb.write(json.dumps({
+                    'status': status_text,
+                    'timestamp': time.time()
+                }))
+        update_heartbeat('running: start')  # Initial heartbeat
+        last_heartbeat = time.time()
         
         # --- Smart Filtering: Fetch existing products from WP if configured ---
         api_url = os.getenv("WP_API_URL")
@@ -926,6 +937,10 @@ class ProductDetailScraper(BaseScraper):
                 product_id = link_info.get('id')
                 if not url or not product_id:
                     continue
+                # Update heartbeat every 20 seconds
+                if time.time() - last_heartbeat > 20:
+                    update_heartbeat(f'running: product {i+1} of {len(links_to_process)}')
+                    last_heartbeat = time.time()
                 
                 logging.info(f"--- ({i+1}/{len(links_to_process)}) Processing Product ID: {product_id}")
 
@@ -1019,6 +1034,8 @@ class ProductDetailScraper(BaseScraper):
                 
                 # Post final batch to WordPress (as backup, since products were already live streamed)
                 self.post_batch_to_wordpress(batch, api_url, api_key)
+        # Final heartbeat update
+        update_heartbeat('finished')
 
         # Log final summary
         logging.info(f"✅ Scraping completed: {products_scraped} new products added to {self.OUTPUT_FILE}")
