@@ -164,10 +164,12 @@ jobs:
         id: get_params
         run: |
           # Try to fetch from WordPress, but don't fail if it doesn't work
-          curl -s -u journal:zealous "https://exclusive-carpenter.localsite.io/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}" > params.json || echo '{"api_url": "", "api_key": ""}' > params.json
+          curl -s -u "${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}" "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}" > params.json || echo '{"api_url": "", "api_key": ""}' > params.json
           echo "WP_API_URL=$(jq -r .api_url params.json)" >> $GITHUB_ENV
           echo "WP_API_KEY=$(jq -r .api_key params.json)" >> $GITHUB_ENV
           echo "WordPress integration status: $(jq -r .api_url params.json | grep -q '^$' && echo 'Not configured' || echo 'Configured')"
+        env:
+          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
 # Added the neccessary weblink using LocalWP livelink 
       - name: 🚀 Run ESP scraper (streaming upload + batch save)
         run: |
@@ -185,6 +187,9 @@ jobs:
           WP_API_KEY: ${{ github.event.inputs.api_key }}
           WP_EXISTING_PRODUCTS_URL: ${{ github.event.inputs.wp_api_url }}
           WP_EXISTING_PRODUCTS_KEY: ${{ github.event.inputs.wp_api_key }}
+          WP_BASIC_AUTH_USER: ${{ secrets.WP_BASIC_AUTH_USER }}
+          WP_BASIC_AUTH_PASS: ${{ secrets.WP_BASIC_AUTH_PASS }}
+          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
 
       - name: 🔧 Create minimal batch file if none exist
         run: |

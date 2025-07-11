@@ -738,10 +738,21 @@ class ProductDetailScraper(BaseScraper):
         """
         Fetch the list of existing products from the WordPress plugin.
         Returns a set of product_ids and a set of skus.
+        Supports optional HTTP Basic Auth if WP_BASIC_AUTH_USER and WP_BASIC_AUTH_PASS are set.
+        Uses WP_BASE_URL as the base for constructing endpoints if needed.
         """
+        import os
+        from requests.auth import HTTPBasicAuth
+        wp_base_url = os.getenv("WP_BASE_URL")
         headers = {"Authorization": f"Bearer {api_key}"}
+        username = os.getenv("WP_BASIC_AUTH_USER")
+        password = os.getenv("WP_BASIC_AUTH_PASS")
+        auth = HTTPBasicAuth(username, password) if username and password else None
+        # If api_url is not provided, construct it from WP_BASE_URL
+        if not api_url and wp_base_url:
+            api_url = wp_base_url.rstrip('/') + '/wp-json/promostandards-importer/v1/existing-products'
         try:
-            resp = requests.get(api_url, headers=headers, timeout=30)
+            resp = requests.get(api_url, headers=headers, auth=auth, timeout=30)
             resp.raise_for_status()
             data = resp.json()
             product_ids = set()
