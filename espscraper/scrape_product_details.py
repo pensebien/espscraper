@@ -709,26 +709,119 @@ class ProductDetailScraper(BaseScraper):
         except Exception as e:
             logging.error(f"❌ Failed to post batch to WordPress: {e}")
 
-    def scrape_all_details(self, force_relogin=False):
+    def fetch_existing_products(self, api_url, api_key):
+        """
+        Fetch the list of existing products from the WordPress plugin.
+        Returns a set of product_ids and a set of skus.
+        """
+        headers = {"Authorization": f"Bearer {api_key}"}
+        try:
+            resp = requests.get(api_url, headers=headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            product_ids = set()
+            skus = set()
+            for prod in data.get('products', []):
+                if prod.get('product_id'):
+                    product_ids.add(str(prod['product_id']))
+                if prod.get('sku'):
+                    skus.add(str(prod['sku']))
+            return product_ids, skus
+        except Exception as e:
+            logging.error(f"Failed to fetch existing products: {e}")
+            return set(), set()
+
+    def scrape_all_details(self, force_relogin=False, mode='scrape'):
         self.login(force_relogin=force_relogin)
         product_links = self.read_product_links()
         scraped_ids = self.get_scraped_ids()
         
-        # Filter out already scraped products
+        # --- Smart Filtering: Fetch existing products from WP if configured ---
+        api_url = os.getenv("WP_API_URL")
+        api_key = os.getenv("WP_API_KEY")
+        existing_product_ids = set()
+        existing_skus = set()
+        if api_url and api_key:
+            # Use /existing-products endpoint
+            if api_url.endswith('/upload'):
+                existing_url = api_url.replace('/upload', '/existing-products')
+            else:
+                existing_url = api_url.rstrip('/') + '/existing-products'
+            logging.info(f"Fetching existing products from {existing_url}")
+            existing_product_ids, existing_skus = self.fetch_existing_products(existing_url, api_key)
+        
+        # --- Filter links based on mode ---
         links_to_process = []
         skipped_duplicates = 0
         for link in product_links:
             product_id = str(link.get('id'))
-            if product_id not in scraped_ids:
-                links_to_process.append(link)
-            else:
+            # Always skip if already scraped in this run
+            if product_id in scraped_ids:
                 skipped_duplicates += 1
+                continue
+            if mode == 'scrape':
+                # Only scrape if not in store
+                if product_id not in existing_product_ids:
+                    links_to_process.append(link)
+                else:
+                    skipped_duplicates += 1
+            elif mode == 'override':
+                # Scrape all
+                links_to_process.append(link)
+            elif mode == 'sync':
+                # --- Sync mode: check last_modified ---
+                # Find the store's last_modified for this product
+                store_last_modified = None
+                # We'll need to fetch the last_modified from the store's /existing-products
+                # For efficiency, build a dict of product_id -> last_modified at fetch time
+                if not hasattr(self, '_existing_products_meta'):
+                    # Build a dict for quick lookup
+                    self._existing_products_meta = {}
+                    api_url = os.getenv("WP_API_URL")
+                    api_key = os.getenv("WP_API_KEY")
+                    if api_url and api_key:
+                        if api_url.endswith('/upload'):
+                            existing_url = api_url.replace('/upload', '/existing-products')
+                        else:
+                            existing_url = api_url.rstrip('/') + '/existing-products'
+                        headers = {"Authorization": f"Bearer {api_key}"}
+                        try:
+                            resp = requests.get(existing_url, headers=headers, timeout=30)
+                            resp.raise_for_status()
+                            data = resp.json()
+                            for prod in data.get('products', []):
+                                pid = str(prod.get('product_id'))
+                                if pid:
+                                    self._existing_products_meta[pid] = prod.get('last_modified')
+                        except Exception as e:
+                            logging.error(f"Failed to fetch existing products for sync mode: {e}")
+                store_last_modified = self._existing_products_meta.get(product_id)
+                # Get the candidate's last_modified (if available in link)
+                candidate_last_modified = link.get('last_modified')
+                if store_last_modified and candidate_last_modified:
+                    # Compare ISO8601 strings
+                    if candidate_last_modified > store_last_modified:
+                        links_to_process.append(link)
+                    else:
+                        skipped_duplicates += 1
+                else:
+                    # Fallback: if not in store, add; else skip
+                    if product_id not in existing_product_ids:
+                        links_to_process.append(link)
+                    else:
+                        skipped_duplicates += 1
+            else:
+                # Default: behave like scrape
+                if product_id not in existing_product_ids:
+                    links_to_process.append(link)
+                else:
+                    skipped_duplicates += 1
         
         if self.limit:
             original_count = len(links_to_process)
             links_to_process = links_to_process[:self.limit]
         
-        logging.info(f"🚀 Starting to scrape {len(links_to_process)} products (skipped {skipped_duplicates} duplicates)...")
+        logging.info(f"🚀 Starting to scrape {len(links_to_process)} products (skipped {skipped_duplicates} duplicates, mode={mode})...")
 
         # --- Hardcoded Robust Rate Limiting ---
         max_requests_per_minute = 25

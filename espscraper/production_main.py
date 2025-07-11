@@ -82,18 +82,17 @@ def run_scraper(args):
             headless=config['HEADLESS']
         )
         
-        # Collect links if requested
-        if args.collect_links:
-            logger.info("Starting link collection...")
-            api_scraper = ApiScraper(session_manager)
-            status = api_scraper.collect_product_links(
-                force_relogin=args.force_relogin,
-                limit=args.limit,
-                new_only=args.new_only,
-                detail_output_file=args.output_file
-            )
-            if status:
-                logger.info(f"Link collection completed: {status}")
+        # Always collect latest product links before scraping
+        logger.info("Starting link collection (always-on)...")
+        api_scraper = ApiScraper(session_manager)
+        status = api_scraper.collect_product_links(
+            force_relogin=args.force_relogin,
+            limit=args.limit,
+            new_only=False,  # We'll filter after collecting
+            detail_output_file=args.output_file
+        )
+        if status:
+            logger.info(f"Link collection completed: {status}")
         
         # Setup detail scraper
         scraper = ProductDetailScraper(
@@ -108,9 +107,9 @@ def run_scraper(args):
             debug_mode=config['DEBUG_MODE']
         )
         
-        # Run scraping
-        logger.info("Starting product detail scraping...")
-        scraper.scrape_all_details(force_relogin=args.force_relogin)
+        # Run scraping with mode
+        logger.info(f"Starting product detail scraping in mode: {args.mode}")
+        scraper.scrape_all_details(force_relogin=args.force_relogin, mode=args.mode)
         logger.info("Scraping completed successfully")
         
         return True
@@ -133,6 +132,7 @@ def main():
     parser.add_argument('--log-file', type=str, default=None, help='Log file path')
     parser.add_argument('--log-level', type=str, default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'])
     parser.add_argument('--validate-only', action='store_true', help='Only validate configuration')
+    parser.add_argument('--mode', type=str, default='scrape', choices=['scrape', 'override', 'sync'], help='Smart scraping mode: scrape (new only), override (all), sync (new+updates)')
     
     args = parser.parse_args()
     
