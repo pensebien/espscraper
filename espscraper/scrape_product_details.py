@@ -21,6 +21,7 @@ from espscraper.selenium_resilient_manager import SeleniumResilientManager
 import requests
 import collections
 import logging
+from lxml import html, etree
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
@@ -95,8 +96,8 @@ class ProductDetailScraper(BaseScraper):
         
         service = Service(ChromeDriverManager().install())
         self.driver = webdriver.Chrome(service=service, options=options)
-        self.driver.set_page_load_timeout(15)
-        self.driver.implicitly_wait(5)
+        self.driver.set_page_load_timeout(30)  # Increased from 15 to 30 seconds
+        self.driver.implicitly_wait(10)  # Increased from 5 to 10 seconds
         
         # Remove webdriver property to avoid detection
         try:
@@ -131,10 +132,16 @@ class ProductDetailScraper(BaseScraper):
         # If session is valid and not force_relogin, skip login
         cookies, page_key, search_id = self.session_manager.load_state()
         if cookies and page_key and search_id and not force_relogin:
-            logging.info("✅ Loaded session state from file, skipping login.")
+            logging.info("✅ Loaded session state from file, attempting to use existing session.")
             # Load cookies into the current driver
             self._load_cookies_into_driver(cookies)
-            return
+            
+            # Check if session validation passed
+            if hasattr(self, '_session_validated') and self._session_validated:
+                logging.info("✅ Existing session is valid, skipping login.")
+                return
+            else:
+                logging.warning("⚠️ Existing session appears to be expired, performing fresh login.")
 
         logging.info("🤖 Launching simple Selenium for login...")
         options = Options()
@@ -148,7 +155,7 @@ class ProductDetailScraper(BaseScraper):
             driver.get(self.PRODUCTS_URL)
             time.sleep(3)
             logging.info("🔒 Login page detected. Logging in...")
-            WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "asilogin_UserName")))
+            WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.ID, "asilogin_UserName")))
             driver.find_element(By.ID, "asilogin_UserName").send_keys(self.USERNAME)
             driver.find_element(By.ID, "asilogin_Password").send_keys(self.PASSWORD)
             driver.find_element(By.ID, "btnLogin").click()
@@ -161,7 +168,7 @@ class ProductDetailScraper(BaseScraper):
                 logging.info("✅ Alert accepted.")
             except Exception:
                 logging.info("ℹ️ No login alert appeared, continuing.")
-            WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "hdnPageStateKey")))
+            WebDriverWait(driver, 40).until(EC.presence_of_element_located((By.ID, "hdnPageStateKey")))
             cookies = driver.get_cookies()
             with open(self.session_manager.cookie_file, 'w') as f:
                 import json
@@ -185,7 +192,7 @@ class ProductDetailScraper(BaseScraper):
             logging.info("🤖 Selenium browser closed.")
 
     def _load_cookies_into_driver(self, cookies):
-        """Load cookies into the current driver"""
+        """Load cookies into the current driver and validate session"""
         try:
             # First navigate to the domain to set cookies
             self.driver.get(self.PRODUCTS_URL)
@@ -206,8 +213,75 @@ class ProductDetailScraper(BaseScraper):
                     logging.warning(f"⚠️ Could not add cookie {cookie.get('name', 'unknown')}: {e}")
             
             logging.info(f"✅ Loaded {len(cookies)} cookies into driver")
+            
+            # Validate session by checking if we're still logged in
+            self._validate_session()
+            
         except Exception as e:
             logging.error(f"⚠️ Error loading cookies into driver: {e}")
+
+    def _validate_session(self):
+        """Validate that the session is still active"""
+        try:
+            # Refresh the page to see if we're still logged in
+            self.driver.refresh()
+            time.sleep(3)
+            
+            # Check if we're redirected to login page
+            current_url = self.driver.current_url
+            if 'login' in current_url.lower() or 'asilogin' in current_url.lower():
+                logging.warning("⚠️ Session expired - redirected to login page")
+                self._session_validated = False
+                return False
+            
+            # Check for login form elements
+            try:
+                login_form = self.driver.find_element(By.ID, "asilogin_UserName")
+                if login_form:
+                    logging.warning("⚠️ Session expired - login form detected")
+                    self._session_validated = False
+                    return False
+            except:
+                pass
+            
+            # Check for authenticated page elements
+            try:
+                # Look for elements that indicate we're logged in
+                authenticated_elements = [
+                    "hdnPageStateKey",
+                    "productDetailsMain", 
+                    "product-list",
+                    "search-results"
+                ]
+                
+                for element_id in authenticated_elements:
+                    try:
+                        self.driver.find_element(By.ID, element_id)
+                        logging.info("✅ Session validated successfully")
+                        self._session_validated = True
+                        return True
+                    except:
+                        continue
+                
+                # If we can't find authenticated elements, check if we're on a product page
+                if 'productID=' in current_url:
+                    logging.info("✅ Session validated - on product page")
+                    self._session_validated = True
+                    return True
+                
+                logging.warning("⚠️ Session validation inconclusive")
+                self._session_validated = True  # Assume valid if we can't determine
+                return True
+                
+            except Exception as e:
+                logging.warning(f"⚠️ Error during session validation: {e}")
+                self._session_validated = True  # Assume valid on error
+                return True
+                
+        except Exception as e:
+            logging.error(f"❌ Session validation failed: {e}")
+            self._session_validated = False
+            return False
 
     def read_product_links(self):
         import json
@@ -287,7 +361,8 @@ class ProductDetailScraper(BaseScraper):
         Scrapes product details from the currently opened product detail page.
         """
         try:
-            detail_soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+            # Use LXML for better performance
+            detail_soup = BeautifulSoup(self.driver.page_source, 'lxml')
             
             # --- Product Name (updated selectors) ---
             name = "N/A"
@@ -309,19 +384,26 @@ class ProductDetailScraper(BaseScraper):
             except:
                 pass
 
-            # Product Number (SKU) - updated selectors
+            # Product Number (SKU) - updated selectors based on actual HTML structure
             sku = "N/A"
             try:
                 sku_selectors = [
-                    'span.product-number',
+                    'span.product-number.ng-binding',  # Direct product number span
+                    'span.product-number',  # Fallback to any product-number
                     '.product-sku',
                     '[data-product-sku]',
-                    '.product-id'
+                    '.product-id',
+                    'span[translate*="PRODUCT_NO"]'  # Translate attribute approach
                 ]
                 for selector in sku_selectors:
                     sku_elem = detail_soup.select_one(selector)
                     if sku_elem:
-                        sku = sku_elem.text.strip().replace('Product #:', '').strip()
+                        sku_text = sku_elem.text.strip()
+                        # Clean up the text (remove "Product #:" prefix)
+                        if 'Product #:' in sku_text:
+                            sku = sku_text.replace('Product #:', '').strip()
+                        else:
+                            sku = sku_text
                         break
             except:
                 pass
@@ -367,12 +449,14 @@ class ProductDetailScraper(BaseScraper):
             # Main Image URL
             image_url = variant_images[0] if variant_images else "N/A"
 
-            # Price Range - updated selectors
+            # Price Range - updated selectors based on actual HTML structure
             price = "N/A"
             try:
                 price_selectors = [
-                    '#productDetailsMain div.product-price a.ng-binding',
-                    '.product-price',
+                    '.product-price a.ng-binding',  # Direct price link
+                    '.product-price a[ng-click*="scrollTo"]',  # Price with ng-click
+                    '.product-price .ng-binding',  # Any ng-binding in price div
+                    '.product-price strong + a',  # Link after "Price" label
                     '[data-product-price]',
                     '.price-range'
                 ]
@@ -388,7 +472,7 @@ class ProductDetailScraper(BaseScraper):
             colors = []
             try:
                 color_selectors = [
-                    'span:contains("Colors") + span',
+                    'span:-soup-contains("Colors") + span',
                     '.product-colors span',
                     '[data-product-colors]'
                 ]
@@ -443,41 +527,23 @@ class ProductDetailScraper(BaseScraper):
                 except:
                     pass
 
-            # --- Simplified Imprint Section ---
-            imprint_info = {
-                'General': {},
-                'Methods': {},
-                'Services': {},
-                'Other': {}
-            }
-            try:
-                imprint_section = detail_soup.select_one('#pnlImprint')
-                if imprint_section:
-                    # Extract basic imprint info
-                    for attr_div in imprint_section.select('div.product-attribute'):
-                        header_elem = attr_div.select_one('span.attribute-header, span.property-label')
-                        if header_elem:
-                            key = header_elem.get_text(strip=True).replace(':', '')
-                            values = [span.get_text(strip=True) for span in attr_div.select('span.ng-binding') if span.get_text(strip=True)]
-                            if key and values:
-                                imprint_info['General'][key] = values if len(values) > 1 else values[0]
-            except Exception as e:
-                logging.warning(f"⚠️ Error extracting imprint info: {e}")
-
-            # --- Simplified Production Info ---
-            production_info = {}
-            try:
-                options_section = detail_soup.select_one('#pnlOptions')
-                if options_section:
-                    for attr_div in options_section.select('div.product-attribute'):
-                        header_elem = attr_div.select_one('span.attribute-header')
-                        if header_elem:
-                            key = header_elem.get_text(strip=True)
-                            values = [span.get_text(strip=True) for span in attr_div.select('span.ng-binding') if span.get_text(strip=True)]
-                            if key and values:
-                                production_info[key] = values if len(values) > 1 else values[0]
-            except:
-                pass
+            # --- Comprehensive AngularJS Data Extraction ---
+            angular_data = self.get_angular_product_data()
+            
+            # --- Enhanced Imprint Section with Charges ---
+            imprint_info = self.extract_comprehensive_imprint(detail_soup, angular_data)
+            
+            # --- Enhanced Production Info ---
+            production_info = self.extract_comprehensive_production_info(detail_soup, angular_data)
+            
+            # --- Shipping Information ---
+            shipping_info = self.extract_shipping_info(detail_soup, angular_data)
+            
+            # --- Safety & Compliance ---
+            safety_info = self.extract_safety_compliance(detail_soup, angular_data)
+            
+            # --- Supplier Information with ASINumber ---
+            supplier_info = self.extract_supplier_info(detail_soup, angular_data)
 
             # --- Production Time and Supplier ---
             production_time = "N/A"
@@ -516,8 +582,8 @@ class ProductDetailScraper(BaseScraper):
             except:
                 pass
 
-            # --- Pricing Table (simplified) ---
-            pricing_table = self.extract_pricing_table()
+            # --- Comprehensive Pricing Tables ---
+            pricing_table = self.extract_comprehensive_pricing(detail_soup, angular_data)
 
             # --- Related Products (simplified) ---
             related_products = []
@@ -530,6 +596,37 @@ class ProductDetailScraper(BaseScraper):
             # Get current URL
             current_url = self.driver.current_url
 
+            # --- ProductNumber extraction (from HTML) ---
+            product_number = ""
+            try:
+                product_number_elem = detail_soup.select_one('span.product-number[translate-values]')
+                if product_number_elem:
+                    attr = product_number_elem.get('translate-values', '')
+                    # Try to parse as JSON/dict
+                    import json
+                    import re
+                    attr_fixed = attr.replace("'", '"')
+                    try:
+                        d = json.loads(attr_fixed)
+                        product_number = d.get('productno', '')
+                    except Exception:
+                        # Fallback: try to extract number from text
+                        match = re.search(r'(\\d+)', product_number_elem.text)
+                        if match:
+                            product_number = match.group(1)
+                # If still not found, fallback to SKU if numeric
+                if not product_number and sku and sku.isdigit():
+                    product_number = sku
+            except Exception:
+                pass
+
+            # --- ProductURL and ProductArtURL construction ---
+            product_url = f"https://www.hitpromo.net/product/show/{product_number}" if product_number else ""
+            product_art_url = f"https://www.hitpromo.net/fs/artTemplates/{product_number}/{product_number}.pdf" if product_number else ""
+
+            # Add scraped date
+            scraped_date = time.strftime('%Y-%m-%d %H:%M:%S')
+            
             return {
                 "ProductID": product_id,
                 "UpdateDate": update_date,
@@ -538,9 +635,11 @@ class ProductDetailScraper(BaseScraper):
                 "URL": current_url,
                 "Name": name,
                 "SKU": sku,
+                "ProductNumber": product_number,
                 "ShortDescription": short_description,
                 "ImageURL": image_url,
                 "VariantImages": variant_images,
+                "Price": price,  # Added price field
                 "PricingTable": pricing_table,
                 "Colors": colors,
                 "ProductionTime": production_time,
@@ -548,9 +647,11 @@ class ProductDetailScraper(BaseScraper):
                 "RelatedProduct": related_products,
                 "Imprint": imprint_info,
                 "ProductionInfo": production_info,
-                "Shipping": {},
-                "SafetyAndCompliance": {},
-                "SupplierInfo": {}
+                "Shipping": shipping_info,
+                "SafetyAndCompliance": safety_info,
+                "SupplierInfo": supplier_info,
+                "ProductArtURL": product_art_url,
+                "ScrapedDate": scraped_date
             }
 
         except Exception as e:
@@ -574,7 +675,7 @@ class ProductDetailScraper(BaseScraper):
             
             for selector in pricing_selectors:
                 try:
-                    pricing_section = WebDriverWait(self.driver, 3).until(
+                    pricing_section = WebDriverWait(self.driver, 10).until(  # Increased from 3 to 10
                         EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                     )
                     if pricing_section:
@@ -586,7 +687,7 @@ class ProductDetailScraper(BaseScraper):
                 logging.warning('⚠️ No pricing section found, skipping pricing table')
                 return []
 
-            pricing_soup = BeautifulSoup(pricing_section.get_attribute('innerHTML'), 'html.parser')
+            pricing_soup = BeautifulSoup(pricing_section.get_attribute('innerHTML'), 'lxml')
             table = pricing_soup.find('table')
 
             if not table:
@@ -654,6 +755,921 @@ class ProductDetailScraper(BaseScraper):
         except Exception as e:
             logging.warning(f'⚠️ Error in extract_pricing_table: {e}')
             return []
+
+    def get_angular_product_data(self):
+        """Extract complete product data from AngularJS with enhanced script execution and waiting"""
+        try:
+            # First, ensure all scripts are executed and AngularJS is fully loaded
+            logging.info("🔄 Ensuring all JavaScript scripts are executed...")
+            
+            # Wait for AngularJS to be fully loaded and trigger digest cycles
+            self.driver.execute_script("""
+                // Wait for AngularJS to be available
+                if (typeof angular !== 'undefined') {
+                    // Trigger multiple digest cycles to ensure all data is populated
+                    var $rootScope = angular.element(document.body).scope();
+                    if ($rootScope) {
+                        // Force multiple digest cycles
+                        for (var i = 0; i < 3; i++) {
+                            $rootScope.$apply();
+                            $rootScope.$digest();
+                        }
+                        
+                        // Wait for any pending async operations
+                        if ($rootScope.$$phase) {
+                            $rootScope.$evalAsync(function() {});
+                        }
+                    }
+                    
+                    // Trigger any pending timeouts or intervals
+                    if (window.setTimeout) {
+                        // Force execution of any pending timeouts
+                        var originalSetTimeout = window.setTimeout;
+                        window.setTimeout = function(fn, delay) {
+                            if (delay === 0) {
+                                fn();
+                            } else {
+                                originalSetTimeout(fn, delay);
+                            }
+                        };
+                    }
+                    
+                    // Execute any pending scripts
+                    var scripts = document.querySelectorAll('script');
+                    for (var i = 0; i < scripts.length; i++) {
+                        var script = scripts[i];
+                        if (script.type === 'text/javascript' || !script.type) {
+                            try {
+                                if (script.innerHTML) {
+                                    eval(script.innerHTML);
+                                }
+                            } catch (e) {
+                                // Ignore script execution errors
+                            }
+                        }
+                    }
+                    
+                    // Force execution of any AngularJS watchers
+                    var allScopes = [];
+                    function collectScopes(scope) {
+                        allScopes.push(scope);
+                        if (scope.$$childHead) {
+                            collectScopes(scope.$$childHead);
+                        }
+                        if (scope.$$nextSibling) {
+                            collectScopes(scope.$$nextSibling);
+                        }
+                    }
+                    
+                    if ($rootScope) {
+                        collectScopes($rootScope);
+                        allScopes.forEach(function(scope) {
+                            if (scope.$digest) {
+                                scope.$digest();
+                            }
+                        });
+                    }
+                }
+                
+                // Wait for any dynamic content to load
+                return new Promise(function(resolve) {
+                    setTimeout(function() {
+                        resolve('Scripts executed and AngularJS ready');
+                    }, 2000);
+                });
+            """)
+            
+            # Wait for the script execution to complete
+            time.sleep(3)
+            
+            # Now extract the AngularJS data with enhanced methods
+            angular_data = self.driver.execute_script("""
+                // Enhanced AngularJS data extraction with multiple fallback strategies
+                var productData = {};
+                var scopeFound = false;
+                
+                // Method 1: Try to find the ProductDetailCtrl controller scope (most reliable)
+                if (typeof angular !== 'undefined') {
+                    try {
+                        // Find the ProductDetailCtrl controller
+                        var productDetailElements = document.querySelectorAll('[ng-controller*="ProductDetailCtrl"]');
+                        for (var i = 0; i < productDetailElements.length; i++) {
+                            var element = productDetailElements[i];
+                            var scope = angular.element(element).scope();
+                            if (scope && scope.vm && scope.vm.product) {
+                                var vm = scope.vm;
+                                productData = {
+                                    product: vm.product || {},
+                                    pricing: vm.product.Prices || [],
+                                    variants: vm.product.Variants || [],
+                                    imprinting: vm.product.Imprinting || {},
+                                    shipping: vm.product.Shipping || {},
+                                    supplier: vm.product.Supplier || {},
+                                    attributes: vm.product.Attributes || {},
+                                    warnings: vm.product.Warnings || [],
+                                    certifications: vm.product.Certifications || []
+                                };
+                                scopeFound = true;
+                                break;
+                            }
+                        }
+                    } catch (e) {
+                        // Continue to next method
+                    }
+                }
+                
+                // Method 2: Try to find any controller with vm.product
+                if (!scopeFound && typeof angular !== 'undefined') {
+                    try {
+                        var controllers = document.querySelectorAll('[ng-controller]');
+                        for (var i = 0; i < controllers.length; i++) {
+                            var controllerScope = angular.element(controllers[i]).scope();
+                            if (controllerScope && controllerScope.vm && controllerScope.vm.product) {
+                                var vm = controllerScope.vm;
+                                productData = {
+                                    product: vm.product || {},
+                                    pricing: vm.product.Prices || [],
+                                    variants: vm.product.Variants || [],
+                                    imprinting: vm.product.Imprinting || {},
+                                    shipping: vm.product.Shipping || {},
+                                    supplier: vm.product.Supplier || {},
+                                    attributes: vm.product.Attributes || {},
+                                    warnings: vm.product.Warnings || [],
+                                    certifications: vm.product.Certifications || []
+                                };
+                                scopeFound = true;
+                                break;
+                            }
+                        }
+                    } catch (e) {
+                        // Continue to next method
+                    }
+                }
+                
+                // Method 3: Try to find any scope with product data
+                if (!scopeFound && typeof angular !== 'undefined') {
+                    try {
+                        // Try multiple elements to find the scope
+                        var elements = [
+                            document.body,
+                            document.querySelector('#productDetailsMain'),
+                            document.querySelector('.product-details'),
+                            document.querySelector('[ng-controller]'),
+                            document.querySelector('[ng-model]')
+                        ];
+                        
+                        for (var i = 0; i < elements.length; i++) {
+                            if (elements[i]) {
+                                var scope = angular.element(elements[i]).scope();
+                                if (scope && scope.product) {
+                                    productData = {
+                                        product: scope.product || {},
+                                        pricing: scope.product.Prices || [],
+                                        variants: scope.product.Variants || [],
+                                        imprinting: scope.product.Imprinting || {},
+                                        shipping: scope.product.Shipping || {},
+                                        supplier: scope.product.Supplier || {},
+                                        attributes: scope.product.Attributes || {},
+                                        warnings: scope.product.Warnings || [],
+                                        certifications: scope.product.Certifications || []
+                                    };
+                                    scopeFound = true;
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        // Continue to next method
+                    }
+                }
+                
+                // Method 4: Try to extract from ng-model attributes (enhanced)
+                if (!scopeFound) {
+                    var ngModels = document.querySelectorAll('[ng-model]');
+                    for (var i = 0; i < ngModels.length; i++) {
+                        var model = ngModels[i].getAttribute('ng-model');
+                        if (model && (model.includes('product') || model.includes('vm') || model.includes('pricing'))) {
+                            // Try to evaluate the model
+                            try {
+                                var modelValue = eval(model);
+                                if (modelValue && typeof modelValue === 'object') {
+                                    productData = {
+                                        product: modelValue || {},
+                                        pricing: modelValue.Prices || [],
+                                        variants: modelValue.Variants || [],
+                                        imprinting: modelValue.Imprinting || {},
+                                        shipping: modelValue.Shipping || {},
+                                        supplier: modelValue.Supplier || {},
+                                        attributes: modelValue.Attributes || {},
+                                        warnings: modelValue.Warnings || [],
+                                        certifications: modelValue.Certifications || []
+                                    };
+                                    scopeFound = true;
+                                    break;
+                                }
+                            } catch (e) {
+                                // Continue to next model
+                            }
+                        }
+                    }
+                }
+                
+                // Method 5: Try to extract from data attributes
+                if (!scopeFound) {
+                    var dataElements = document.querySelectorAll('[data-product]');
+                    if (dataElements.length > 0) {
+                        try {
+                            var dataProduct = JSON.parse(dataElements[0].getAttribute('data-product'));
+                            if (dataProduct) {
+                                productData = {
+                                    product: dataProduct || {},
+                                    pricing: dataProduct.Prices || [],
+                                    variants: dataProduct.Variants || [],
+                                    imprinting: dataProduct.Imprinting || {},
+                                    shipping: dataProduct.Shipping || {},
+                                    supplier: dataProduct.Supplier || {},
+                                    attributes: dataProduct.Attributes || {},
+                                    warnings: dataProduct.Warnings || [],
+                                    certifications: dataProduct.Certifications || []
+                                };
+                                scopeFound = true;
+                            }
+                        } catch (e) {
+                            // Continue to next method
+                        }
+                    }
+                }
+                
+                // Method 6: Try to extract from window object (some apps expose data here)
+                if (!scopeFound) {
+                    if (window.productData || window.Product || window.product) {
+                        var windowData = window.productData || window.Product || window.product;
+                        if (windowData && typeof windowData === 'object') {
+                            productData = {
+                                product: windowData || {},
+                                pricing: windowData.Prices || [],
+                                variants: windowData.Variants || [],
+                                imprinting: windowData.Imprinting || {},
+                                shipping: windowData.Shipping || {},
+                                supplier: windowData.Supplier || {},
+                                attributes: windowData.Attributes || {},
+                                warnings: windowData.Warnings || [],
+                                certifications: windowData.Certifications || []
+                            };
+                            scopeFound = true;
+                        }
+                    }
+                }
+                
+                // Method 7: Enhanced - Try to extract from any AngularJS scope with product data
+                if (!scopeFound && typeof angular !== 'undefined') {
+                    try {
+                        // Get all AngularJS scopes
+                        var allScopes = [];
+                        function collectAllScopes(scope) {
+                            if (scope) {
+                                allScopes.push(scope);
+                                if (scope.$$childHead) {
+                                    collectAllScopes(scope.$$childHead);
+                                }
+                                if (scope.$$nextSibling) {
+                                    collectAllScopes(scope.$$nextSibling);
+                                }
+                            }
+                        }
+                        
+                        var rootScope = angular.element(document.body).scope();
+                        if (rootScope) {
+                            collectAllScopes(rootScope);
+                            
+                            // Check each scope for product data
+                            for (var i = 0; i < allScopes.length; i++) {
+                                var scope = allScopes[i];
+                                if (scope.product || (scope.vm && scope.vm.product)) {
+                                    var product = scope.product || (scope.vm ? scope.vm.product : null);
+                                    if (product) {
+                                        productData = {
+                                            product: product || {},
+                                            pricing: product.Prices || [],
+                                            variants: product.Variants || [],
+                                            imprinting: product.Imprinting || {},
+                                            shipping: product.Shipping || {},
+                                            supplier: product.Supplier || {},
+                                            attributes: product.Attributes || {},
+                                            warnings: product.Warnings || [],
+                                            certifications: product.Certifications || []
+                                        };
+                                        scopeFound = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        // Continue to next method
+                    }
+                }
+                
+                return {
+                    data: productData,
+                    scopeFound: scopeFound,
+                    availableScopes: {
+                        angular: typeof angular !== 'undefined',
+                        windowProduct: !!(window.productData || window.Product || window.product),
+                        totalScopes: allScopes ? allScopes.length : 0
+                    }
+                };
+            """)
+            
+            if angular_data.get('scopeFound'):
+                logging.info("✅ Extracted AngularJS product data successfully")
+                return angular_data.get('data', {})
+            else:
+                logging.warning(f"⚠️ No AngularJS scope found. Available: {angular_data.get('availableScopes', {})}")
+                return {}
+                
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to extract AngularJS data: {e}")
+            return {}
+
+    def extract_comprehensive_pricing(self, detail_soup, angular_data):
+        """Extract all pricing tables including variants and nested charges"""
+        pricing_tables = []
+        
+        try:
+            # Method 1: Extract from AngularJS data (preferred)
+            if angular_data.get('pricing'):
+                main_pricing = self.parse_angular_pricing(angular_data['pricing'], 'main')
+                pricing_tables.extend(main_pricing)
+            
+            # Extract variant pricing from AngularJS
+            if angular_data.get('variants'):
+                for variant in angular_data['variants']:
+                    if variant.get('Prices'):
+                        variant_pricing = self.parse_angular_pricing(variant['Prices'], f"variant_{variant.get('Number', 'unknown')}")
+                        pricing_tables.extend(variant_pricing)
+            
+            # Method 2: Extract from HTML pricing sections
+            if not pricing_tables:
+                pricing_tables = self.extract_pricing_from_html(detail_soup)
+            
+            # Method 3: Fallback to original table extraction
+            if not pricing_tables:
+                pricing_tables = self.extract_pricing_table()
+            
+            logging.info(f"✅ Extracted {len(pricing_tables)} pricing tables")
+            return pricing_tables
+            
+        except Exception as e:
+            logging.warning(f"⚠️ Error extracting comprehensive pricing: {e}")
+            return self.extract_pricing_table()  # Fallback to original method
+
+    def extract_pricing_from_html(self, detail_soup):
+        """Extract pricing from HTML sections including AngularJS components"""
+        pricing_tables = []
+        
+        try:
+            # Method 1: Extract directly from AngularJS scope (preferred)
+            pricing_data = self.driver.execute_script("""
+                var pricing_tables = [];
+                
+                // Extract main product pricing
+                if (typeof vm !== 'undefined' && vm && vm.product && vm.product.Prices) {
+                    pricing_tables.push({
+                        type: 'main_product',
+                        data: vm.product.Prices
+                    });
+                }
+                
+                // Extract variant pricing
+                if (typeof vm !== 'undefined' && vm && vm.product && vm.product.Variants) {
+                    for (var i = 0; i < vm.product.Variants.length; i++) {
+                        var variant = vm.product.Variants[i];
+                        if (variant.Prices) {
+                            pricing_tables.push({
+                                type: 'variant_' + (variant.Number || i),
+                                data: variant.Prices
+                            });
+                        }
+                    }
+                }
+                
+                return pricing_tables;
+            """)
+            
+            if pricing_data:
+                for table_info in pricing_data:
+                    if table_info.get('data'):
+                        parsed_pricing = self.parse_angular_pricing(table_info['data'], table_info['type'])
+                        pricing_tables.extend(parsed_pricing)
+            
+            # Method 2: Extract from rendered HTML components
+            if not pricing_tables:
+                pricing_sections = detail_soup.select('#pnlPricing, .pricing-section, [id*="pricing"], [class*="pricing"]')
+                
+                for section in pricing_sections:
+                    # Look for product-table-charges components
+                    product_tables = section.select('product-table-charges, [ng-model*="Prices"], [ng-model*="pricing"]')
+                    
+                    for table in product_tables:
+                        # Extract data from ng-model attributes
+                        ng_model = table.get('ng-model', '')
+                        if 'Prices' in ng_model or 'pricing' in ng_model:
+                            try:
+                                # Execute JavaScript to get the data
+                                pricing_data = self.driver.execute_script(f"""
+                                    try {{
+                                        return {ng_model} || [];
+                                    }} catch(e) {{
+                                        return [];
+                                    }}
+                                """)
+                                
+                                if pricing_data:
+                                    model_name = ng_model.replace('vm.product.', '').replace('vm.', '')
+                                    parsed_pricing = self.parse_angular_pricing(pricing_data, f"html_{model_name}")
+                                    pricing_tables.extend(parsed_pricing)
+                                    
+                            except Exception as e:
+                                logging.warning(f"⚠️ Could not extract pricing from {ng_model}: {e}")
+                    
+                    # Also look for standard tables as fallback
+                    tables = section.select('table')
+                    for table in tables:
+                        table_pricing = self.parse_html_table_pricing(table)
+                        if table_pricing:
+                            pricing_tables.extend(table_pricing)
+            
+            return pricing_tables
+            
+        except Exception as e:
+            logging.warning(f"⚠️ Error extracting pricing from HTML: {e}")
+            return []
+
+    def parse_html_table_pricing(self, table):
+        """Parse standard HTML table for pricing data"""
+        pricing_tables = []
+        
+        try:
+            rows = table.find_all('tr')
+            if not rows or len(rows) < 2:
+                return []
+            
+            # Find the header row with quantities
+            header_row = rows[0]
+            quantity_map = {}
+            for i, th in enumerate(header_row.find_all(['th', 'td'])):
+                if i == 0: continue  # Skip the first column
+                try:
+                    quantity = int(re.sub(r'[^0-9]', '', th.text))
+                    if quantity > 0:
+                        quantity_map[i] = quantity
+                except (ValueError, TypeError):
+                    continue
+            
+            if not quantity_map:
+                return []
+            
+            # Process data rows
+            for row in rows[1:]:
+                cells = row.find_all(['td', 'th'])
+                if not cells or len(cells) <= 1:
+                    continue
+                
+                row_label = cells[0].get_text(strip=True)
+                if not row_label or self.is_price(row_label):
+                    continue
+                
+                breaks = []
+                for i, cell in enumerate(cells):
+                    if i in quantity_map:
+                        quantity = quantity_map[i]
+                        price_str = cell.get_text(strip=True)
+                        discount_code = None
+                        
+                        dc_elem = cell.find('small', class_='price-code') or cell.find('span', class_='price-code')
+                        if dc_elem:
+                            discount_code = dc_elem.get_text(strip=True).strip('()')
+                        
+                        price_match = re.search(r"[\d.,]+\d", price_str)
+                        if price_match:
+                            try:
+                                price = float(price_match.group().replace(',', ''))
+                                breaks.append({"quantity": quantity, "price": price, "discount_code": discount_code})
+                            except (ValueError, TypeError):
+                                continue
+                
+                if breaks:
+                    pricing_tables.append({"type": row_label, "breaks": breaks})
+            
+            return pricing_tables
+            
+        except Exception as e:
+            logging.warning(f"⚠️ Error parsing HTML table pricing: {e}")
+            return []
+
+    def parse_angular_pricing(self, prices_data, table_type):
+        """Parse AngularJS pricing data into structured format"""
+        pricing_tables = []
+        
+        try:
+            for price_item in prices_data:
+                if isinstance(price_item, dict):
+                    pricing_table = {
+                        'type': price_item.get('Type', table_type),
+                        'breaks': []
+                    }
+                    
+                    # Extract price breaks
+                    if price_item.get('Breaks'):
+                        for break_item in price_item['Breaks']:
+                            if isinstance(break_item, dict):
+                                pricing_table['breaks'].append({
+                                    'quantity': break_item.get('Quantity', 0),
+                                    'price': break_item.get('Price', 0),
+                                    'discount_code': break_item.get('DiscountCode')
+                                })
+                    
+                    pricing_tables.append(pricing_table)
+            
+            return pricing_tables
+        except Exception as e:
+            logging.warning(f"⚠️ Error parsing AngularJS pricing: {e}")
+            return []
+
+    def extract_comprehensive_imprint(self, detail_soup, angular_data):
+        """Extract comprehensive imprint information including nested charges"""
+        imprint_info = {
+            'General': {},
+            'Methods': {},
+            'Services': {},
+            'Other': {}
+        }
+        
+        try:
+            # Method 1: Extract directly from AngularJS scope (preferred)
+            imprint_data = self.driver.execute_script("""
+                var imprint_info = {};
+                
+                if (typeof vm !== 'undefined' && vm && vm.product && vm.product.Imprinting) {
+                    var imprinting = vm.product.Imprinting;
+                    
+                    // Extract general info
+                    imprint_info.General = {
+                        Colors: imprinting.Colors || [],
+                        Sizes: imprinting.Sizes || [],
+                        Locations: imprinting.Locations || [],
+                        FullColorProcess: imprinting.FullColorProcess,
+                        Personalization: imprinting.Personalization,
+                        SoldUnimprinted: imprinting.SoldUnimprinted
+                    };
+                    
+                    // Extract methods with charges
+                    if (imprinting.Methods && imprinting.Methods.Values) {
+                        imprint_info.Methods = {};
+                        for (var i = 0; i < imprinting.Methods.Values.length; i++) {
+                            var method = imprinting.Methods.Values[i];
+                            imprint_info.Methods[method.Name || 'Method_' + i] = {
+                                Description: method.Description || '',
+                                Charges: method.Charges || []
+                            };
+                        }
+                    }
+                    
+                    // Extract services with nested charges
+                    if (imprinting.Services && imprinting.Services.Values) {
+                        imprint_info.Services = {};
+                        for (var i = 0; i < imprinting.Services.Values.length; i++) {
+                            var service = imprinting.Services.Values[i];
+                            imprint_info.Services[service.Name || 'Service_' + i] = {
+                                Description: service.Description || '',
+                                Charges: service.Charges || []
+                            };
+                        }
+                    }
+                }
+                
+                return imprint_info;
+            """)
+            
+            if imprint_data:
+                imprint_info.update(imprint_data)
+            
+            # Method 2: Extract from AngularJS data (fallback)
+            if not imprint_info['Methods'] and angular_data.get('imprinting'):
+                imprint_data = angular_data['imprinting']
+                
+                # Extract methods
+                if imprint_data.get('Methods'):
+                    for method in imprint_data['Methods']:
+                        method_name = method.get('Name', 'Unknown Method')
+                        imprint_info['Methods'][method_name] = {
+                            'Description': method.get('Description', ''),
+                            'Charges': self.extract_charges_from_angular(method.get('Charges', []))
+                        }
+                
+                # Extract services with nested charges
+                if imprint_data.get('Services', {}).get('Values'):
+                    for service in imprint_data['Services']['Values']:
+                        service_name = service.get('Name', 'Unknown Service')
+                        imprint_info['Services'][service_name] = {
+                            'Description': service.get('Description', ''),
+                            'Charges': self.extract_charges_from_angular(service.get('Charges', []))
+                        }
+                
+                # Extract general info
+                general_fields = ['Colors', 'Sizes', 'Locations', 'FullColorProcess', 'Personalization', 'SoldUnimprinted']
+                for field in general_fields:
+                    if imprint_data.get(field):
+                        imprint_info['General'][field] = imprint_data[field]
+            
+            # Method 3: Fallback to HTML extraction
+            if not imprint_info['Methods']:
+                imprint_section = detail_soup.select_one('#pnlImprint')
+                if imprint_section:
+                    imprint_info = self.extract_imprint_from_html(imprint_section)
+            
+            logging.info("✅ Extracted comprehensive imprint information")
+            return imprint_info
+            
+        except Exception as e:
+            logging.warning(f"⚠️ Error extracting comprehensive imprint: {e}")
+            return imprint_info
+
+    def extract_charges_from_angular(self, charges_data):
+        """Extract charge information from AngularJS data"""
+        charges = []
+        
+        try:
+            for charge in charges_data:
+                if isinstance(charge, dict):
+                    charges.append({
+                        'name': charge.get('Name', ''),
+                        'price': charge.get('Price', ''),
+                        'description': charge.get('Description', '')
+                    })
+            
+            return charges
+        except Exception as e:
+            logging.warning(f"⚠️ Error extracting charges: {e}")
+            return charges
+
+    def extract_imprint_from_html(self, imprint_section):
+        """Extract imprint information from HTML as fallback"""
+        imprint_info = {
+            'General': {},
+            'Methods': {},
+            'Services': {},
+            'Other': {}
+        }
+        
+        try:
+            # Extract basic imprint info
+            for attr_div in imprint_section.select('div.product-attribute'):
+                header_elem = attr_div.select_one('span.attribute-header, span.property-label')
+                if header_elem:
+                    key = header_elem.get_text(strip=True).replace(':', '')
+                    values = [span.get_text(strip=True) for span in attr_div.select('span.ng-binding') if span.get_text(strip=True)]
+                    if key and values:
+                        imprint_info['General'][key] = values if len(values) > 1 else values[0]
+            
+            return imprint_info
+        except Exception as e:
+            logging.warning(f"⚠️ Error extracting imprint from HTML: {e}")
+            return imprint_info
+
+    def extract_comprehensive_production_info(self, detail_soup, angular_data):
+        """Extract comprehensive production information"""
+        production_info = {}
+        
+        try:
+            # Extract from AngularJS data first
+            if angular_data.get('product'):
+                product_data = angular_data['product']
+                
+                # Extract all available fields
+                fields_to_extract = [
+                    'Description', 'AdditionalInfo', 'TradeNames', 'Weight', 'Upc',
+                    'IsAssembled', 'BatteryInfo', 'WarrantyInfo', 'Samples'
+                ]
+                
+                for field in fields_to_extract:
+                    if product_data.get(field):
+                        production_info[field] = product_data[field]
+                
+                # Extract attributes (Colors, Sizes, Materials, etc.)
+                if product_data.get('Attributes'):
+                    for attr_type, attr_data in product_data['Attributes'].items():
+                        if attr_data and attr_data.get('Values'):
+                            production_info[f'{attr_type}'] = attr_data['Values']
+            
+            # Fallback to HTML extraction
+            options_section = detail_soup.select_one('#pnlOptions')
+            if options_section:
+                production_info.update(self.extract_production_from_html(options_section))
+            
+            logging.info("✅ Extracted comprehensive production information")
+            return production_info
+            
+        except Exception as e:
+            logging.warning(f"⚠️ Error extracting comprehensive production info: {e}")
+            return {}
+
+    def extract_production_from_html(self, options_section):
+        """Extract production information from HTML as fallback"""
+        production_info = {}
+        
+        try:
+            for attr_div in options_section.select('div.product-attribute'):
+                header_elem = attr_div.select_one('span.attribute-header')
+                if header_elem:
+                    key = header_elem.get_text(strip=True)
+                    values = [span.get_text(strip=True) for span in attr_div.select('span.ng-binding') if span.get_text(strip=True)]
+                    if key and values:
+                        production_info[key] = values if len(values) > 1 else values[0]
+            
+            return production_info
+        except Exception as e:
+            logging.warning(f"⚠️ Error extracting production from HTML: {e}")
+            return production_info
+
+    def extract_shipping_info(self, detail_soup, angular_data):
+        """Extract shipping information"""
+        shipping_info = {}
+        
+        try:
+            # Extract from AngularJS data
+            if angular_data.get('shipping'):
+                shipping_data = angular_data['shipping']
+                
+                # Extract shipping fields
+                shipping_fields = ['FOBPoints', 'Weight', 'PackageUnit', 'Options', 'Dimensions']
+                for field in shipping_fields:
+                    if shipping_data.get(field):
+                        shipping_info[field] = shipping_data[field]
+                
+                # Extract package info
+                if shipping_data.get('ItemsPerPackage'):
+                    shipping_info['ItemsPerPackage'] = shipping_data['ItemsPerPackage']
+                
+                # Extract plain box info
+                if 'PackageInPlainBox' in shipping_data:
+                    shipping_info['PackageInPlainBox'] = shipping_data['PackageInPlainBox']
+            
+            # Extract from HTML as fallback
+            shipping_section = detail_soup.select_one('#pnlShipping')
+            if shipping_section:
+                shipping_info.update(self.extract_shipping_from_html(shipping_section))
+            
+            logging.info("✅ Extracted shipping information")
+            return shipping_info
+            
+        except Exception as e:
+            logging.warning(f"⚠️ Error extracting shipping info: {e}")
+            return {}
+
+    def extract_shipping_from_html(self, shipping_section):
+        """Extract shipping information from HTML"""
+        shipping_info = {}
+        
+        try:
+            # Extract production time
+            production_time_elem = shipping_section.select_one('div[ng-repeat*="ProductionTime"]')
+            if production_time_elem:
+                shipping_info['ProductionTime'] = production_time_elem.get_text(strip=True)
+            
+            # Extract rush service
+            rush_elem = shipping_section.select_one('p[ng-if*="HasRushService"]')
+            if rush_elem:
+                shipping_info['RushService'] = 'Yes'
+            
+            # Extract country of origin
+            origin_elem = shipping_section.select_one('p[ng-if*="Origin"]')
+            if origin_elem:
+                shipping_info['CountryOfOrigin'] = origin_elem.get_text(strip=True)
+            
+            return shipping_info
+        except Exception as e:
+            logging.warning(f"⚠️ Error extracting shipping from HTML: {e}")
+            return shipping_info
+
+    def extract_safety_compliance(self, detail_soup, angular_data):
+        """Extract safety and compliance information"""
+        safety_info = {}
+        
+        try:
+            # Extract from AngularJS data
+            if angular_data.get('warnings'):
+                safety_info['Warnings'] = angular_data['warnings']
+            
+            if angular_data.get('certifications'):
+                safety_info['Certifications'] = angular_data['certifications']
+            
+            # Extract from HTML as fallback
+            safety_section = detail_soup.select_one('#pnlSafety')
+            if safety_section:
+                safety_info.update(self.extract_safety_from_html(safety_section))
+            
+            logging.info("✅ Extracted safety and compliance information")
+            return safety_info
+            
+        except Exception as e:
+            logging.warning(f"⚠️ Error extracting safety info: {e}")
+            return {}
+
+    def extract_safety_from_html(self, safety_section):
+        """Extract safety information from HTML"""
+        safety_info = {}
+        
+        try:
+            # Extract Prop 65 warnings
+            prop_warnings = safety_section.select('p[ng-repeat*="PROP"]')
+            if prop_warnings:
+                safety_info['Prop65Warnings'] = [w.get_text(strip=True) for w in prop_warnings]
+            
+            # Extract safety warnings
+            safety_warnings = safety_section.select('p[ng-repeat*="SWCH"]')
+            if safety_warnings:
+                safety_info['SafetyWarnings'] = [w.get_text(strip=True) for w in safety_warnings]
+            
+            # Extract certifications
+            cert_elem = safety_section.select_one('p[ng-if*="Certifications"]')
+            if cert_elem:
+                safety_info['Certifications'] = cert_elem.get_text(strip=True)
+            
+            return safety_info
+        except Exception as e:
+            logging.warning(f"⚠️ Error extracting safety from HTML: {e}")
+            return safety_info
+
+    def extract_supplier_info(self, detail_soup, angular_data):
+        """Extract supplier information including ASINumber"""
+        supplier_info = {}
+        
+        try:
+            # Extract from AngularJS data
+            if angular_data.get('supplier'):
+                supplier_data = angular_data['supplier']
+                supplier_info.update({
+                    'Name': supplier_data.get('Name', ''),
+                    'Rating': supplier_data.get('Rating', ''),
+                    'Email': supplier_data.get('Email', ''),
+                    'Website': supplier_data.get('Website', '')
+                })
+            
+            # Extract from HTML (including ASINumber)
+            supplier_section = detail_soup.select_one('#pnlSupplierInfo')
+            if supplier_section:
+                supplier_info.update(self.extract_supplier_from_html(supplier_section))
+            
+            logging.info("✅ Extracted supplier information")
+            return supplier_info
+            
+        except Exception as e:
+            logging.warning(f"⚠️ Error extracting supplier info: {e}")
+            return {}
+
+    def extract_supplier_from_html(self, supplier_section):
+        """Extract supplier information from HTML including ASINumber"""
+        supplier_info = {}
+        
+        try:
+            # Extract supplier name
+            name_elem = supplier_section.select_one('.supplier-name')
+            if name_elem:
+                supplier_info['Name'] = name_elem.get_text(strip=True)
+            
+            # Extract ASINumber
+            asi_elem = supplier_section.select_one('.asi-num')
+            if asi_elem:
+                asi_text = asi_elem.get_text(strip=True)
+                # Extract ASI number from "asi/61125" format
+                asi_match = re.search(r'asi/(\d+)', asi_text)
+                if asi_match:
+                    supplier_info['ASINumber'] = asi_match.group(1)
+            
+            # Extract phone number
+            phone_elem = supplier_section.select_one('.col-xs-6.text-right div')
+            if phone_elem:
+                supplier_info['Phone'] = phone_elem.get_text(strip=True)
+            
+            # Extract website
+            website_elem = supplier_section.select_one('a[href*="http"]')
+            if website_elem:
+                supplier_info['Website'] = website_elem.get('href', '')
+            
+            # Extract fax
+            fax_elem = supplier_section.select_one('div:-soup-contains("Fax:")')
+            if fax_elem:
+                fax_text = fax_elem.get_text(strip=True)
+                fax_match = re.search(r'Fax:\s*([^)]+)', fax_text)
+                if fax_match:
+                    supplier_info['Fax'] = fax_match.group(1).strip()
+            
+            return supplier_info
+        except Exception as e:
+            logging.warning(f"⚠️ Error extracting supplier from HTML: {e}")
+            return supplier_info
 
     def is_price(self, text):
         # Matches $7.88, 7.88, 2.70, etc.
@@ -953,7 +1969,7 @@ class ProductDetailScraper(BaseScraper):
                     self.driver.get(url)
                     # Wait for the page to load with a more flexible approach
                     try:
-                        WebDriverWait(self.driver, 15).until(
+                        WebDriverWait(self.driver, 30).until(  # Increased from 15 to 30
                             EC.presence_of_element_located((By.CSS_SELECTOR, "#productDetailsMain"))
                         )
                     except Exception as e:
@@ -967,7 +1983,7 @@ class ProductDetailScraper(BaseScraper):
                         element_found = False
                         for selector in alternative_selectors:
                             try:
-                                WebDriverWait(self.driver, 5).until(
+                                WebDriverWait(self.driver, 10).until(  # Increased from 5 to 10
                                     EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                                 )
                                 element_found = True
@@ -1082,7 +2098,7 @@ class ProductDetailScraper(BaseScraper):
                             
                             # Wait for page load with better error handling
                             try:
-                                WebDriverWait(self.driver, 15).until(
+                                WebDriverWait(self.driver, 30).until(  # Increased from 15 to 30
                                     EC.presence_of_element_located((By.CSS_SELECTOR, "#productDetailsMain"))
                                 )
                             except Exception as e:
@@ -1096,7 +2112,7 @@ class ProductDetailScraper(BaseScraper):
                                 element_found = False
                                 for selector in alternative_selectors:
                                     try:
-                                        WebDriverWait(self.driver, 5).until(
+                                        WebDriverWait(self.driver, 10).until(  # Increased from 5 to 10
                                             EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                                         )
                                         element_found = True
