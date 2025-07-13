@@ -1,2 +1,10 @@
-# Remove JSONL files from LFS tracking since they need to be processed directly
-# *.jsonl filter=lfs diff=lfs merge=lfs -text
+# Use Git LFS for large files only
+# Large files that don't need direct processing
+espscraper/data/final_product_details.jsonl filter=lfs diff=lfs merge=lfs -text
+
+# Keep batch files as regular files for direct processing
+batch/*.jsonl -filter=lfs -diff=lfs -merge=lfs -text
+espscraper/data/*.jsonl -filter=lfs -diff=lfs -merge=lfs -text
+
+# Other large files that should use LFS
+*.jsonl filter=lfs diff=lfs merge=lfs -text
