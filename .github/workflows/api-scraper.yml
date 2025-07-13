@@ -30,7 +30,7 @@ permissions:
 jobs:
   api_scraper:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: 📥 Checkout repo
         uses: actions/checkout@v4
@@ -92,7 +92,7 @@ jobs:
       - name: 🔍 Check existing data
         run: |
           echo "=== Checking existing data ==="
-          
+
           # Check for existing links
           if [ -f "espscraper/data/api_scraped_links.jsonl" ]; then
             link_count=$(wc -l < espscraper/data/api_scraped_links.jsonl)
@@ -100,7 +100,7 @@ jobs:
           else
             echo "⚠️ No product links file found"
           fi
-          
+
           # Check for existing batches
           if [ -d "batch" ] && [ "$(ls -A batch)" ]; then
             batch_count=$(ls batch/batch_*.jsonl 2>/dev/null | wc -l)
@@ -108,7 +108,7 @@ jobs:
           else
             echo "⚠️ No existing batch files found"
           fi
-          
+
           # Check for main output file
           if [ -f "espscraper/data/final_product_details.jsonl" ]; then
             product_count=$(wc -l < espscraper/data/final_product_details.jsonl)
@@ -120,35 +120,35 @@ jobs:
       - name: 📥 Fetch latest files from artifacts branch
         run: |
           echo "=== Fetching latest files from artifacts branch ==="
-          
+
           # Try to fetch the artifacts branch
           if git ls-remote --heads origin artifacts | grep -q artifacts; then
             echo "✅ Artifacts branch exists, fetching latest files..."
-            
+
             # Fetch the artifacts branch
             git fetch origin artifacts:artifacts || echo "Could not fetch artifacts branch"
-            
+
             # Copy latest files if they exist
             if [ -f "artifacts-branch/espscraper/data/api_scraped_links.jsonl" ]; then
               cp artifacts-branch/espscraper/data/api_scraped_links.jsonl espscraper/data/
               echo "✅ Updated api_scraped_links.jsonl from artifacts branch"
             fi
-            
+
             if [ -f "artifacts-branch/final_product_details.jsonl" ]; then
               cp artifacts-branch/final_product_details.jsonl espscraper/data/
               echo "✅ Updated final_product_details.jsonl from artifacts branch"
             fi
-            
+
             if [ -d "artifacts-branch/batch" ]; then
               cp -r artifacts-branch/batch/* batch/ || echo "No batch files to copy"
               echo "✅ Updated batch files from artifacts branch"
             fi
-            
+
             # Show file sizes after update
             echo "=== File sizes after update ==="
             ls -la espscraper/data/*.jsonl || echo "No JSONL files found"
             ls -la batch/batch_*.jsonl 2>/dev/null || echo "No batch files found"
-            
+
           else
             echo "⚠️ Artifacts branch does not exist yet, starting fresh"
           fi
@@ -156,21 +156,21 @@ jobs:
       - name: 🚀 Run API scraper with batch processing
         run: |
           echo "=== Starting API scraper with batch processing ==="
-          
+
           # Set batch size from input or default
-          BATCH_SIZE=${BATCH_SIZE:-${{ github.event.inputs.batch_size || '50' }}
-          PRODUCT_LIMIT=${PRODUCT_LIMIT:-${{ github.event.inputs.product_limit || '4000' }}
-          MODE=${MODE:-${{ github.event.inputs.mode || 'scrape' }}
-          FORCE_LINK_COLLECTION=${FORCE_LINK_COLLECTION:-${{ github.event.inputs.force_link_collection || 'false' }}
-          MAX_LINK_AGE=${MAX_LINK_AGE:-${{ github.event.inputs.max_link_age || '48' }}
-          
+          BATCH_SIZE=${BATCH_SIZE:-${{ github.event.inputs.batch_size || '50' }}}
+          PRODUCT_LIMIT=${PRODUCT_LIMIT:-${{ github.event.inputs.product_limit || '4000' }}}
+          MODE=${MODE:-${{ github.event.inputs.mode || 'scrape' }}}
+          FORCE_LINK_COLLECTION=${FORCE_LINK_COLLECTION:-${{ github.event.inputs.force_link_collection || 'false' }}}
+          MAX_LINK_AGE=${MAX_LINK_AGE:-${{ github.event.inputs.max_link_age || '48' }}}
+
           echo "Configuration:"
           echo "  Batch Size: $BATCH_SIZE"
           echo "  Product Limit: $PRODUCT_LIMIT"
           echo "  Mode: $MODE"
           echo "  Force Link Collection: $FORCE_LINK_COLLECTION"
           echo "  Max Link Age: $MAX_LINK_AGE hours"
-          
+
           # Run the scraper
           python3 -m espscraper.production_main \
             --batch-size $BATCH_SIZE \
@@ -190,13 +190,13 @@ jobs:
       - name: 📊 Generate batch statistics
         run: |
           echo "=== Batch Statistics ==="
-          
+
           if [ -d "batch" ]; then
             python3 validate_batches.py --stats-only
           else
             echo "⚠️ No batch directory found"
           fi
-          
+
           # Check main output file
           if [ -f "espscraper/data/final_product_details.jsonl" ]; then
             main_count=$(wc -l < espscraper/data/final_product_details.jsonl)
@@ -206,7 +206,7 @@ jobs:
       - name: 🔧 Validate batch files
         run: |
           echo "=== Validating batch files ==="
-          
+
           if [ -d "batch" ]; then
             python3 validate_batches.py --validate-only
           else
@@ -222,29 +222,29 @@ jobs:
       - name: 📝 Copy files to artifacts branch
         run: |
           echo "=== Copying files to artifacts branch ==="
-          
+
           # Create directories
           mkdir -p artifacts-branch/espscraper/data
           mkdir -p artifacts-branch/batch
-          
+
           # Copy main output file
           if [ -f "espscraper/data/final_product_details.jsonl" ]; then
             cp espscraper/data/final_product_details.jsonl artifacts-branch/
             echo "✅ Copied main output file"
           fi
-          
+
           # Copy links file
           if [ -f "espscraper/data/api_scraped_links.jsonl" ]; then
             cp espscraper/data/api_scraped_links.jsonl artifacts-branch/espscraper/data/
             echo "✅ Copied links file"
           fi
-          
+
           # Copy batch files
           if [ -d "batch" ] && [ "$(ls -A batch)" ]; then
             cp batch/batch_*.jsonl artifacts-branch/batch/ 2>/dev/null || echo "No batch files to copy"
             echo "✅ Copied batch files"
           fi
-          
+
           # Copy any other JSONL files
           if ls espscraper/data/*.jsonl 1> /dev/null 2>&1; then
             cp espscraper/data/*.jsonl artifacts-branch/espscraper/data/
@@ -256,7 +256,7 @@ jobs:
           cd artifacts-branch
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           # Check if there are any files to commit
           if [ -n "$(git status --porcelain)" ]; then
             git add .
@@ -273,16 +273,16 @@ jobs:
         run: |
           echo "=== API Scraper Run Summary ==="
           echo "✅ Scraping completed successfully"
-          
+
           # Show final file counts
           if [ -f "espscraper/data/final_product_details.jsonl" ]; then
             product_count=$(wc -l < espscraper/data/final_product_details.jsonl)
             echo "📊 Total products scraped: $product_count"
           fi
-          
+
           if [ -d "batch" ]; then
             batch_count=$(ls batch/batch_*.jsonl 2>/dev/null | wc -l)
             echo "📦 Batch files created: $batch_count"
           fi
-          
-          echo "🎯 Ready for import process" 
+
+          echo "🎯 Ready for import process"
