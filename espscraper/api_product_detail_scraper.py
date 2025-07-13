@@ -27,6 +27,7 @@ from queue import Queue
 import hashlib
 import signal
 import traceback
+import re
 
 # Add the espscraper directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'espscraper'))
@@ -462,13 +463,41 @@ class ApiProductDetailScraper(BaseScraper):
         # Remove leading slash and build full URL
         clean_path = image_path.lstrip('/')
         return f"https://api.asicentral.com/v1/{clean_path}"
-    
+
+    def _slugify(self, value: str) -> str:
+        """Slugify a string for use in URLs"""
+        value = value.lower()
+        value = re.sub(r'[^a-z0-9]+', '-', value)
+        value = re.sub(r'-+', '-', value)
+        return value.strip('-')
+
     def _extract_product_data(self, data: Dict, product_id: str, extraction_time: float, related_products: List[Dict] = None) -> ProductData:
-        """Extract structured product data from API response with enhanced image handling"""
-        
+        """Extract structured product data from API response with enhanced image handling and custom fields"""
         # Build proper image URLs
         main_image_url = self._build_image_url(data.get('ImageUrl', ''))
-        
+
+        # ProductURL: from link file if present, else construct
+        product_url = data.get('ProductUrl')
+        if not product_url:
+            product_url = f"https://espweb.asicentral.com/Default.aspx?appCode=WESP&appVersion=4.1.0&page=ProductDetails&referrerPage=ProductResults&referrerModule=PRDRES&refModSufx=Generic&PCUrl=1&productID={product_id}&autoLaunchVS=0&tab=list"
+
+        # ProductNumber: from numbers key (use first if list)
+        numbers = data.get('numbers') or data.get('Numbers')
+        product_number = ''
+        if numbers:
+            if isinstance(numbers, list):
+                product_number = str(numbers[0]) if numbers else ''
+            else:
+                product_number = str(numbers)
+
+        # VendorProductURL
+        name = data.get('Name', 'product')
+        slug = self._slugify(name)
+        vendor_product_url = f"https://www.hitpromo.net/product/show/{product_number}/{slug}" if product_number else ''
+
+        # ProductArtURL
+        product_art_url = f"https://www.hitpromo.net/fs/artTemplates/{product_number}/{product_number}.pdf" if product_number else ''
+
         # Process variants with proper image URLs
         variants = data.get('Variants', [])
         processed_variants = []
@@ -505,14 +534,15 @@ class ApiProductDetailScraper(BaseScraper):
                     'type': 'virtual_sample'
                 })
         
+        # Compose ProductData with new fields
         return ProductData(
             product_id=product_id,
-            name=data.get('Name', 'N/A'),
+            name=name,
             sku=data.get('SKU', 'N/A'),
             description=data.get('Description', ''),
             short_description=data.get('ShortDescription', ''),
             image_url=main_image_url,
-            product_url=data.get('ProductUrl', ''),
+            product_url=product_url,
             supplier_info=self._extract_supplier_info(data),
             pricing_info=self._extract_pricing_info(data),
             production_info=self._extract_production_info(data),
@@ -527,7 +557,11 @@ class ApiProductDetailScraper(BaseScraper):
             related_products=related_products or [],
             raw_data=data,
             extraction_time=extraction_time,
-            scraped_date=datetime.now().isoformat()
+            scraped_date=datetime.now().isoformat(),
+            # Custom fields (snake_case)
+            product_number=product_number,
+            vendor_product_url=vendor_product_url,
+            product_art_url=product_art_url
         )
     
     def _extract_supplier_info(self, data: Dict) -> Dict:

@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 class ProductData:
     """Structured product data from API"""
     product_id: str
+    
     name: str
     sku: str
     description: str
@@ -35,4 +36,8 @@ class ProductData:
     extraction_time: float
     extraction_method: str = "api"
     scraped_date: str = None
-    related_products: List[Dict] = None 
+    related_products: List[Dict] = None
+    # Use snake_case for new fields
+    product_number: str = ""
+    vendor_product_url: str = ""
+    product_art_url: str = "" 
