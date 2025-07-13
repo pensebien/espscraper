@@ -67,6 +67,55 @@ class ApiScraper(BaseScraper):
         if missing:
             raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
 
+    def _validate_and_repair_jsonl(self, filename):
+        """Validate and repair JSONL file if needed"""
+        if not os.path.exists(filename):
+            return True
+        
+        try:
+            valid_lines = []
+            invalid_count = 0
+            
+            with open(filename, 'r') as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        json.loads(line)
+                        valid_lines.append(line)
+                    except json.JSONDecodeError as e:
+                        invalid_count += 1
+                        logging.warning(f"⚠️ Found invalid JSON on line {line_num}: {e}")
+            
+            if invalid_count > 0:
+                logging.warning(f"🔧 Repairing {filename}: removing {invalid_count} invalid lines")
+                
+                # Create backup
+                backup_file = filename + '.backup'
+                import shutil
+                shutil.copy2(filename, backup_file)
+                logging.info(f"📋 Created backup: {backup_file}")
+                
+                # Write repaired file
+                temp_file = filename + '.repaired'
+                with open(temp_file, 'w') as f:
+                    for line in valid_lines:
+                        f.write(line + '\n')
+                
+                # Atomic move
+                shutil.move(temp_file, filename)
+                logging.info(f"✅ Repaired {filename}: kept {len(valid_lines)} valid lines")
+                
+                return True
+            else:
+                logging.debug(f"✅ {filename} is valid")
+                return True
+                
+        except Exception as e:
+            logging.error(f"❌ Error validating/repairing {filename}: {e}")
+            return False
+    
     def extract_products_from_json(self, response_data):
         products = []
         if not response_data or 'd' not in response_data:
@@ -291,8 +340,45 @@ class ApiScraper(BaseScraper):
                         continue  # skip already scraped
                     if pid and str(pid) in collected_ids:
                         continue  # skip already collected in output file
-                    with open(self.OUTPUT_FILE, 'a') as f_out:
-                        f_out.write(json.dumps(product) + '\n')
+                    
+                    # Validate and repair output file before writing (only once per page)
+                    if page_new_links == 0 and os.path.exists(self.OUTPUT_FILE):
+                        if not self._validate_and_repair_jsonl(self.OUTPUT_FILE):
+                            logging.error(f"❌ Failed to validate/repair {self.OUTPUT_FILE}")
+                            continue
+                    
+                    # Atomic write for JSONL line
+                    json_line = json.dumps(product, ensure_ascii=False, separators=(',', ':')) + '\n'
+                    temp_file = self.OUTPUT_FILE + '.tmp'
+                    
+                    try:
+                        # Write to temporary file first
+                        with open(temp_file, 'a') as f:
+                            f.write(json_line)
+                            f.flush()  # Ensure data is written to disk
+                            os.fsync(f.fileno())  # Force sync to disk
+                        
+                        # Atomic move to final location
+                        if not os.path.exists(self.OUTPUT_FILE):
+                            # If output file doesn't exist, create it with the temp content
+                            os.rename(temp_file, self.OUTPUT_FILE)
+                        else:
+                            # Append to existing file atomically
+                            with open(self.OUTPUT_FILE, 'a') as f:
+                                f.write(json_line)
+                                f.flush()
+                                os.fsync(f.fileno())
+                            # Remove temp file
+                            if os.path.exists(temp_file):
+                                os.remove(temp_file)
+                                
+                    except Exception as e:
+                        # Clean up temp file on error
+                        if os.path.exists(temp_file):
+                            os.remove(temp_file)
+                        logging.error(f"❌ Error writing product {pid}: {e}")
+                        continue
+                    
                     collected_ids.add(str(pid))
                     page_new_links += 1
                 logging.info(f"✅ Page {page_num} complete. {page_new_links} new products written. Total collected: {len(collected_ids)}/{results_total}")

@@ -33,6 +33,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'espscraper'))
 
 from espscraper.session_manager import SessionManager
 from espscraper.base_scraper import BaseScraper
+from espscraper.batch_processor import BatchProcessor
+from espscraper.product_data import ProductData
 
 # Configure logging
 logging.basicConfig(
@@ -78,31 +80,7 @@ class ScrapingConfig:
     heartbeat_interval: int = 60  # seconds
     log_detailed_stats: bool = True
 
-@dataclass
-class ProductData:
-    """Structured product data from API"""
-    product_id: str
-    name: str
-    sku: str
-    description: str
-    short_description: str
-    image_url: str
-    product_url: str
-    supplier_info: Dict
-    pricing_info: Dict
-    production_info: Dict
-    attributes: Dict
-    imprinting: Dict
-    shipping: Dict
-    variants: List
-    warnings: List
-    services: List
-    images: List
-    virtual_samples: List
-    raw_data: Dict
-    extraction_time: float
-    extraction_method: str = "api"
-    scraped_date: str = None
+
 
 class RateLimiter:
     """Intelligent rate limiter with adaptive throttling"""
@@ -189,8 +167,25 @@ class ApiProductDetailScraper(BaseScraper):
         self.PRODUCT_URL_TEMPLATE = os.getenv("PRODUCT_URL_TEMPLATE")
         self.OUTPUT_FILE = os.getenv("PRODUCT_OUTPUT_FILE", "api_scraped_product_data.jsonl")
         
+        # Enhanced indexing and resume tracking
+        self.checkpoint_file = self.OUTPUT_FILE.replace('.jsonl', '.checkpoint.txt')
+        self.progress_file = self.OUTPUT_FILE.replace('.jsonl', '.progress.json')
+        self.scraped_index = set()
+        self.current_batch = []
+        self.batch_start_time = time.time()
+        
+        # Initialize batch processor
+        self.batch_processor = BatchProcessor(
+            batch_size=self.config.batch_size,
+            batch_dir="batch",
+            main_output_file=self.OUTPUT_FILE
+        )
+        
         # Ensure output directory exists
         os.makedirs(os.path.dirname(self.OUTPUT_FILE) if os.path.dirname(self.OUTPUT_FILE) else '.', exist_ok=True)
+        
+        # Load existing progress
+        self._load_progress()
         
         logging.info("🚀 API Product Detail Scraper initialized")
     
@@ -207,6 +202,83 @@ class ApiProductDetailScraper(BaseScraper):
             json.dump(self.stats, f, indent=2)
         logging.info(f"📊 Stats saved to {stats_file}")
     
+    def _load_progress(self):
+        """Load existing progress and scraped index with auto-repair"""
+        # Validate and repair output file before loading
+        if os.path.exists(self.OUTPUT_FILE):
+            if not self._validate_and_repair_jsonl(self.OUTPUT_FILE):
+                logging.error(f"❌ Failed to validate/repair {self.OUTPUT_FILE}")
+                return
+        
+        # Load scraped product IDs from output file
+        if os.path.exists(self.OUTPUT_FILE):
+            try:
+                with open(self.OUTPUT_FILE, 'r') as f:
+                    for line in f:
+                        try:
+                            data = json.loads(line.strip())
+                            product_id = data.get('product_id') or data.get('productId') or data.get('id')
+                            if product_id:
+                                self.scraped_index.add(str(product_id))
+                        except json.JSONDecodeError:
+                            continue
+                logging.info(f"📊 Loaded {len(self.scraped_index)} already scraped products")
+            except Exception as e:
+                logging.warning(f"⚠️ Error loading scraped index: {e}")
+        
+        # Load progress file if exists
+        if os.path.exists(self.progress_file):
+            try:
+                with open(self.progress_file, 'r') as f:
+                    progress_data = json.load(f)
+                    self.current_batch = progress_data.get('current_batch', [])
+                    self.batch_start_time = progress_data.get('batch_start_time', time.time())
+                    logging.info(f"📈 Resuming from batch with {len(self.current_batch)} products")
+            except Exception as e:
+                logging.warning(f"⚠️ Error loading progress: {e}")
+    
+    def _save_progress(self):
+        """Save current progress to file"""
+        try:
+            progress_data = {
+                'current_batch': self.current_batch,
+                'batch_start_time': self.batch_start_time,
+                'scraped_count': len(self.scraped_index),
+                'timestamp': datetime.now().isoformat()
+            }
+            with open(self.progress_file, 'w') as f:
+                json.dump(progress_data, f, indent=2)
+        except Exception as e:
+            logging.warning(f"⚠️ Error saving progress: {e}")
+    
+    def _update_checkpoint(self, product_id: str):
+        """Update checkpoint with current product ID"""
+        try:
+            with open(self.checkpoint_file, 'w') as f:
+                f.write(product_id)
+        except Exception as e:
+            logging.warning(f"⚠️ Error updating checkpoint: {e}")
+    
+    def _get_resume_position(self, product_ids: List[str]) -> int:
+        """Get the position to resume from based on checkpoint"""
+        if not os.path.exists(self.checkpoint_file):
+            return 0
+        
+        try:
+            with open(self.checkpoint_file, 'r') as f:
+                last_product_id = f.read().strip()
+            
+            if last_product_id in product_ids:
+                resume_index = product_ids.index(last_product_id) + 1
+                logging.info(f"🔄 Resuming from position {resume_index} (product {last_product_id})")
+                return resume_index
+            else:
+                logging.info("🔄 Checkpoint product not found in current list, starting from beginning")
+                return 0
+        except Exception as e:
+            logging.warning(f"⚠️ Error reading checkpoint: {e}")
+            return 0
+    
     def _update_heartbeat(self):
         """Update heartbeat for monitoring"""
         if self.config.enable_heartbeat:
@@ -214,6 +286,18 @@ class ApiProductDetailScraper(BaseScraper):
             if now - self.stats['last_heartbeat'] > self.config.heartbeat_interval:
                 self.stats['last_heartbeat'] = now
                 logging.info(f"💓 Heartbeat: {self.stats['successful_requests']} successful, {self.stats['failed_requests']} failed")
+    
+    def _handle_failure(self):
+        """Handle request failure"""
+        self.stats['failed_requests'] += 1
+        self.consecutive_failures += 1
+        self.rate_limiter.record_failure()
+        
+        if (self.config.circuit_breaker_enabled and 
+            self.consecutive_failures >= self.config.max_consecutive_failures):
+            self.circuit_breaker_open = True
+            self.circuit_breaker_open_time = time.time()
+            logging.warning("🚨 Circuit breaker opened due to consecutive failures")
     
     def scrape_product_api(self, product_id: str) -> Optional[ProductData]:
         """Scrape a single product using API with session management"""
@@ -267,7 +351,10 @@ class ApiProductDetailScraper(BaseScraper):
                     extraction_time = time.time() - extraction_start
                     
                     if data:
-                        product_data = self._extract_product_data(data, product_id, extraction_time)
+                        # Get related products
+                        related_products = self._get_related_products(product_id, session)
+                        
+                        product_data = self._extract_product_data(data, product_id, extraction_time, related_products)
                         self.stats['successful_requests'] += 1
                         self.consecutive_failures = 0
                         self.rate_limiter.record_success()
@@ -325,20 +412,98 @@ class ApiProductDetailScraper(BaseScraper):
         logging.error(f"❌ Failed to scrape product {product_id} after {self.config.max_retries} attempts")
         return None
     
-    def _handle_failure(self):
-        """Handle request failure"""
-        self.stats['failed_requests'] += 1
-        self.consecutive_failures += 1
-        self.rate_limiter.record_failure()
+    def _get_related_products(self, product_id: str, session: requests.Session) -> List[Dict]:
+        """Get related products for a given product ID"""
+        try:
+            api_url = f"https://api.asicentral.com/v1/products/{product_id}/suggestions.json?page=1&rpp=5"
+            response = session.get(api_url, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                related = []
+                
+                for item in data.get('Results', []):
+                    pid = item.get('Id')
+                    name = item.get('Name')
+                    image = item.get('ImageUrl')
+                    
+                    # Build proper image URL
+                    if image and not image.startswith('http'):
+                        image = f"https://api.asicentral.com/v1/{image.lstrip('/')}"
+                    
+                    # Build product URL
+                    url = self._build_product_url(pid) if pid else ''
+                    
+                    related.append({
+                        'id': pid,
+                        'name': name,
+                        'image_url': image,
+                        'product_url': url
+                    })
+                
+                return related
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to get related products for {product_id}: {e}")
         
-        if (self.config.circuit_breaker_enabled and 
-            self.consecutive_failures >= self.config.max_consecutive_failures):
-            self.circuit_breaker_open = True
-            self.circuit_breaker_open_time = time.time()
-            logging.warning("🚨 Circuit breaker opened due to consecutive failures")
+        return []
     
-    def _extract_product_data(self, data: Dict, product_id: str, extraction_time: float) -> ProductData:
-        """Extract structured product data from API response"""
+    def _build_product_url(self, product_id: str) -> str:
+        """Build product URL for WordPress import"""
+        return f"https://espweb.asicentral.com/Default.aspx?appCode=WESP&appVersion=4.1.0&page=ProductDetails&productID={product_id}&autoLaunchVS=0&tab=list"
+    
+    def _build_image_url(self, image_path: str) -> str:
+        """Build proper image URL for WordPress import"""
+        if not image_path:
+            return ""
+        
+        if image_path.startswith('http'):
+            return image_path
+        
+        # Remove leading slash and build full URL
+        clean_path = image_path.lstrip('/')
+        return f"https://api.asicentral.com/v1/{clean_path}"
+    
+    def _extract_product_data(self, data: Dict, product_id: str, extraction_time: float, related_products: List[Dict] = None) -> ProductData:
+        """Extract structured product data from API response with enhanced image handling"""
+        
+        # Build proper image URLs
+        main_image_url = self._build_image_url(data.get('ImageUrl', ''))
+        
+        # Process variants with proper image URLs
+        variants = data.get('Variants', [])
+        processed_variants = []
+        for variant in variants:
+            processed_variant = variant.copy()
+            processed_variant['image_url'] = self._build_image_url(variant.get('ImageUrl', ''))
+            processed_variants.append(processed_variant)
+        
+        # Process images array
+        images = data.get('Images', [])
+        processed_images = []
+        for image in images:
+            if isinstance(image, dict):
+                processed_image = image.copy()
+                processed_image['url'] = self._build_image_url(image.get('url', image.get('Url', '')))
+                processed_images.append(processed_image)
+            elif isinstance(image, str):
+                processed_images.append({
+                    'url': self._build_image_url(image),
+                    'type': 'product_image'
+                })
+        
+        # Process virtual sample images
+        virtual_samples = data.get('VirtualSampleImages', [])
+        processed_virtual_samples = []
+        for sample in virtual_samples:
+            if isinstance(sample, dict):
+                processed_sample = sample.copy()
+                processed_sample['url'] = self._build_image_url(sample.get('url', sample.get('Url', '')))
+                processed_virtual_samples.append(processed_sample)
+            elif isinstance(sample, str):
+                processed_virtual_samples.append({
+                    'url': self._build_image_url(sample),
+                    'type': 'virtual_sample'
+                })
         
         return ProductData(
             product_id=product_id,
@@ -346,7 +511,7 @@ class ApiProductDetailScraper(BaseScraper):
             sku=data.get('SKU', 'N/A'),
             description=data.get('Description', ''),
             short_description=data.get('ShortDescription', ''),
-            image_url=data.get('ImageUrl', ''),
+            image_url=main_image_url,
             product_url=data.get('ProductUrl', ''),
             supplier_info=self._extract_supplier_info(data),
             pricing_info=self._extract_pricing_info(data),
@@ -354,11 +519,12 @@ class ApiProductDetailScraper(BaseScraper):
             attributes=self._extract_attributes(data),
             imprinting=self._extract_imprinting_info(data),
             shipping=self._extract_shipping_info(data),
-            variants=data.get('Variants', []),
+            variants=processed_variants,
             warnings=data.get('Warnings', []),
             services=data.get('Services', []),
-            images=data.get('Images', []),
-            virtual_samples=data.get('VirtualSamples', []),
+            images=processed_images,
+            virtual_samples=processed_virtual_samples,
+            related_products=related_products or [],
             raw_data=data,
             extraction_time=extraction_time,
             scraped_date=datetime.now().isoformat()
@@ -468,7 +634,7 @@ class ApiProductDetailScraper(BaseScraper):
             return product_ids
     
     def scrape_all_products(self, mode: str = 'scrape', limit: int = None):
-        """Scrape all products with session management"""
+        """Scrape all products with enhanced indexing and resume capabilities"""
         logging.info(f"🚀 Starting product scraping in {mode} mode")
         
         # Read product IDs
@@ -483,14 +649,43 @@ class ApiProductDetailScraper(BaseScraper):
             logging.info("ℹ️ No products to scrape after filtering")
             return
         
-        logging.info(f"🎯 Scraping {len(filtered_ids)} products")
+        # Get resume position
+        resume_position = self._get_resume_position(filtered_ids)
+        products_to_scrape = filtered_ids[resume_position:]
         
-        # Process products
-        self._process_products_parallel(filtered_ids)
+        logging.info(f"🎯 Scraping {len(products_to_scrape)} products (resuming from position {resume_position})")
         
-        # Save final stats
-        self._save_stats()
-        logging.info("✅ Product scraping completed")
+        try:
+            # Process products with enhanced indexing
+            self._process_products_with_indexing(products_to_scrape)
+            
+            # Finalize batch processing
+            self._finalize_batches()
+            
+            # Save final stats and clean up
+            self._save_stats()
+            self._save_progress()
+            
+            # Clean up checkpoint file on successful completion
+            if os.path.exists(self.checkpoint_file):
+                os.remove(self.checkpoint_file)
+                logging.info("🧹 Cleaned up checkpoint file")
+            
+            logging.info("✅ Product scraping completed")
+            
+        except KeyboardInterrupt:
+            logging.info("🛑 Scraping interrupted by user")
+            self._finalize_batches()
+            self._save_progress()
+            self._save_stats()
+            logging.info("💾 Progress and stats saved")
+            raise
+        except Exception as e:
+            logging.error(f"❌ Unexpected error during scraping: {e}")
+            self._finalize_batches()
+            self._save_progress()
+            self._save_stats()
+            raise
     
     def _filter_products(self, product_ids: List[str], mode: str) -> List[str]:
         """Filter products based on mode and already scraped data"""
@@ -534,8 +729,62 @@ class ApiProductDetailScraper(BaseScraper):
         
         return scraped_ids
     
+    def _process_products_with_indexing(self, product_ids: List[str]):
+        """Process products with enhanced indexing and resume capabilities"""
+        total_products = len(product_ids)
+        completed = 0
+        failed = 0
+        
+        logging.info(f"📊 Starting processing of {total_products} products")
+        
+        for i, product_id in enumerate(product_ids):
+            try:
+                # Update checkpoint
+                self._update_checkpoint(product_id)
+                
+                # Check if already scraped
+                if product_id in self.scraped_index:
+                    logging.info(f"⏭️ Skipping already scraped product {product_id}")
+                    completed += 1
+                    continue
+                
+                # Scrape product
+                product_data = self.scrape_product_api(product_id)
+                
+                if product_data:
+                    # Save product and update index
+                    self._save_single_product(product_data)
+                    self.scraped_index.add(product_id)
+                    completed += 1
+                    
+                    # Update progress every 10 products
+                    if completed % 10 == 0:
+                        self._save_progress()
+                        logging.info(f"📈 Progress: {completed}/{total_products} completed ({completed/total_products*100:.1f}%)")
+                else:
+                    failed += 1
+                    logging.warning(f"⚠️ Failed to scrape product {product_id}")
+                
+                # Update heartbeat
+                self._update_heartbeat()
+                
+                # Batch pause if configured
+                if self.config.batch_pause > 0 and (i + 1) % self.config.batch_size == 0:
+                    logging.info(f"⏸️ Batch pause for {self.config.batch_pause}s")
+                    time.sleep(self.config.batch_pause)
+                
+            except KeyboardInterrupt:
+                logging.info("🛑 Interrupted by user, saving progress...")
+                self._save_progress()
+                raise
+            except Exception as e:
+                failed += 1
+                logging.error(f"❌ Error processing product {product_id}: {e}")
+        
+        logging.info(f"✅ Completed {completed}/{total_products} products ({failed} failed)")
+    
     def _process_products_parallel(self, product_ids: List[str]):
-        """Process products in parallel with session management"""
+        """Process products in parallel with session management (legacy method)"""
         with ThreadPoolExecutor(max_workers=self.config.max_concurrent_requests) as executor:
             futures = []
             
@@ -559,41 +808,99 @@ class ApiProductDetailScraper(BaseScraper):
             
             logging.info(f"✅ Completed {completed}/{len(product_ids)} products")
     
-    def _save_single_product(self, product_data: ProductData):
-        """Save a single product to JSONL file"""
+    def _validate_and_repair_jsonl(self, filename):
+        """Validate and repair JSONL file if needed"""
+        if not os.path.exists(filename):
+            return True
+        
         try:
-            # Convert dataclass to dict for JSON serialization
-            product_dict = {
-                'product_id': product_data.product_id,
-                'name': product_data.name,
-                'sku': product_data.sku,
-                'description': product_data.description,
-                'short_description': product_data.short_description,
-                'image_url': product_data.image_url,
-                'product_url': product_data.product_url,
-                'supplier_info': product_data.supplier_info,
-                'pricing_info': product_data.pricing_info,
-                'production_info': product_data.production_info,
-                'attributes': product_data.attributes,
-                'imprinting': product_data.imprinting,
-                'shipping': product_data.shipping,
-                'variants': product_data.variants,
-                'warnings': product_data.warnings,
-                'services': product_data.services,
-                'images': product_data.images,
-                'virtual_samples': product_data.virtual_samples,
-                'raw_data': product_data.raw_data,
-                'extraction_time': product_data.extraction_time,
-                'extraction_method': product_data.extraction_method,
-                'scraped_date': product_data.scraped_date
-            }
+            valid_lines = []
+            invalid_count = 0
             
-            with open(self.OUTPUT_FILE, 'a') as f:
-                json.dump(product_dict, f)
-                f.write('\n')
+            with open(filename, 'r') as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        json.loads(line)
+                        valid_lines.append(line)
+                    except json.JSONDecodeError as e:
+                        invalid_count += 1
+                        logging.warning(f"⚠️ Found invalid JSON on line {line_num}: {e}")
+            
+            if invalid_count > 0:
+                logging.warning(f"🔧 Repairing {filename}: removing {invalid_count} invalid lines")
+                
+                # Create backup
+                backup_file = filename + '.backup'
+                import shutil
+                shutil.copy2(filename, backup_file)
+                logging.info(f"📋 Created backup: {backup_file}")
+                
+                # Write repaired file
+                temp_file = filename + '.repaired'
+                with open(temp_file, 'w') as f:
+                    for line in valid_lines:
+                        f.write(line + '\n')
+                
+                # Atomic move
+                shutil.move(temp_file, filename)
+                logging.info(f"✅ Repaired {filename}: kept {len(valid_lines)} valid lines")
+                
+                return True
+            else:
+                logging.debug(f"✅ {filename} is valid")
+                return True
+                
+        except Exception as e:
+            logging.error(f"❌ Error validating/repairing {filename}: {e}")
+            return False
+    
+    def _save_single_product(self, product_data: ProductData):
+        """Save a single product using batch processing"""
+        try:
+            # Add product to batch processor
+            if not self.batch_processor.add_product(product_data):
+                logging.error(f"❌ Failed to add product {product_data.product_id} to batch")
+                return False
+            
+            return True
             
         except Exception as e:
             logging.error(f"❌ Error saving product {product_data.product_id}: {e}")
+            return False
+    
+    def _finalize_batches(self):
+        """Finalize batch processing by flushing and merging"""
+        try:
+            logging.info("🔄 Finalizing batch processing...")
+            
+            # Flush any remaining products in current batch
+            if not self.batch_processor.flush_batch():
+                logging.error("❌ Failed to flush final batch")
+                return False
+            
+            # Get batch statistics
+            stats = self.batch_processor.get_batch_stats()
+            logging.info(f"📊 Batch stats: {stats['batch_count']} batches, {stats['total_products']} products")
+            
+            # Merge batches to main output file
+            if stats['batch_count'] > 0:
+                if not self.batch_processor.merge_batches_to_main():
+                    logging.error("❌ Failed to merge batches to main output")
+                    return False
+                
+                logging.info("✅ Successfully merged all batches to main output")
+                
+                # Optionally cleanup batch files (keep them for now)
+                # self.batch_processor.cleanup_batches()
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"❌ Error finalizing batches: {e}")
+            return False
 
 def main():
     """Main function for standalone execution"""
