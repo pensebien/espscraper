@@ -1,653 +1,566 @@
-#!/usr/bin/env python3
-"""
-API-Based ESP Product Scraper with WordPress Integration
-
-This module provides a comprehensive API-based scraper that:
-1. Uses discovered API endpoints for lightning-fast scraping
-2. Implements proper batching and streaming
-3. Handles WordPress/WooCommerce integration separately
-4. Includes robust login, timeout, and throttling
-5. Provides deduplication and smart filtering
-6. Separates import logic from scraping logic
-"""
-
-import os
-import sys
-import time
-import json
-import requests
-import logging
-import collections
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Set, Tuple
-from dataclasses import dataclass
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
-from queue import Queue
-import hashlib
-
-# Add the espscraper directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'espscraper'))
-
-from espscraper.session_manager import SessionManager
 from espscraper.base_scraper import BaseScraper
+from espscraper.session_manager import SessionManager
+import requests
+import json
+import time
+from bs4 import BeautifulSoup
+import re
+import os
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+import urllib.parse
+import argparse
+import math
+import logging
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(message)s',
-    handlers=[
-        logging.FileHandler('api_scraper.log'),
-        logging.StreamHandler()
-    ]
-)
+# --- CONFIGURATION ---
+# Don't load .env file in production - use environment variables directly
+# load_dotenv() # Load variables from .env file
 
-@dataclass
-class ScrapingConfig:
-    """Configuration for API scraping"""
-    max_requests_per_minute: int = 25
-    batch_size: int = 15
-    batch_pause: int = 5
-    min_delay: float = 1.5
-    max_retries: int = 3
-    timeout: int = 30
-    max_workers: int = 3
-    enable_streaming: bool = True
-    enable_batching: bool = True
-    enable_deduplication: bool = True
-    enable_wordpress_integration: bool = True
+USERNAME = os.getenv("ESP_USERNAME")
+PASSWORD = os.getenv("ESP_PASSWORD")
 
-@dataclass
-class ProductData:
-    """Structured product data from API"""
-    product_id: str
-    name: str
-    sku: str
-    description: str
-    short_description: str
-    image_url: str
-    product_url: str
-    supplier_info: Dict
-    pricing_info: Dict
-    production_info: Dict
-    attributes: Dict
-    imprinting: Dict
-    shipping: Dict
-    variants: List
-    warnings: List
-    services: List
-    images: List
-    virtual_samples: List
-    raw_data: Dict
-    extraction_time: float
-    extraction_method: str = "api"
+# Don't exit in production - let the validation handle it
+# if not USERNAME or not PASSWORD:
+#     logging.error("❌ Error: ESP_USERNAME and ESP_PASSWORD must be set in the .env file.")
+#     exit()
 
-class RateLimiter:
-    """Rate limiter for API requests"""
-    
-    def __init__(self, max_requests_per_minute: int, min_delay: float = 1.5):
-        self.max_requests_per_minute = max_requests_per_minute
-        self.min_delay = min_delay
-        self.request_times = collections.deque()
-        self.lock = threading.Lock()
-    
-    def wait_if_needed(self):
-        """Wait if rate limit is exceeded"""
-        with self.lock:
-            now = time.time()
-            
-            # Remove requests older than 60 seconds
-            while self.request_times and now - self.request_times[0] > 60:
-                self.request_times.popleft()
-            
-            # Check if we're at the limit
-            if len(self.request_times) >= self.max_requests_per_minute:
-                wait_time = 60 - (now - self.request_times[0])
-                if wait_time > 0 and wait_time < 30:
-                    logging.info(f"⏸️ Rate limit reached, waiting {wait_time:.1f}s")
-                    time.sleep(wait_time)
-            
-            # Enforce minimum delay between requests
-            if self.request_times and now - self.request_times[-1] < self.min_delay:
-                delay = self.min_delay - (now - self.request_times[-1])
-                if delay > 0 and delay < 10:
-                    time.sleep(delay)
-            
-            self.request_times.append(time.time())
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
-class WordPressIntegrator:
-    """Handles WordPress/WooCommerce integration separately"""
-    
-    def __init__(self, api_url: str = None, api_key: str = None):
-        self.api_url = api_url or os.getenv("WP_API_URL")
-        self.api_key = api_key or os.getenv("WP_API_KEY")
-        self.base_url = os.getenv("WP_BASE_URL")
-        self.basic_auth_user = os.getenv("WP_BASIC_AUTH_USER")
-        self.basic_auth_pass = os.getenv("WP_BASIC_AUTH_PASS")
-        
-        if self.api_url and self.api_key:
-            logging.info("✅ WordPress integration configured")
-        else:
-            logging.info("⚠️ WordPress integration not configured")
-    
-    def get_existing_products(self) -> Tuple[Set[str], Set[str]]:
-        """Fetch existing products from WordPress"""
-        if not self.api_url or not self.api_key:
-            return set(), set()
-        
-        try:
-            # Construct existing products endpoint
-            if self.api_url.endswith('/upload'):
-                existing_url = self.api_url.replace('/upload', '/existing-products')
-            else:
-                existing_url = self.api_url.rstrip('/') + '/existing-products'
-            
-            headers = {"X-API-Key": self.api_key}
-            
-            # Add basic auth if configured
-            auth = None
-            if self.basic_auth_user and self.basic_auth_pass:
-                from requests.auth import HTTPBasicAuth
-                auth = HTTPBasicAuth(self.basic_auth_user, self.basic_auth_pass)
-            
-            response = requests.get(existing_url, headers=headers, auth=auth, timeout=30)
-            response.raise_for_status()
-            
-            data = response.json()
-            product_ids = set()
-            skus = set()
-            
-            for product in data.get('products', []):
-                if product.get('product_id'):
-                    product_ids.add(str(product['product_id']))
-                if product.get('sku'):
-                    skus.add(str(product['sku']))
-            
-            logging.info(f"📊 Found {len(product_ids)} existing products and {len(skus)} existing SKUs")
-            return product_ids, skus
-            
-        except Exception as e:
-            logging.error(f"❌ Failed to fetch existing products: {e}")
-            return set(), set()
-    
-    def stream_single_product(self, product_data: ProductData) -> bool:
-        """Stream a single product to WordPress"""
-        if not self.api_url or not self.api_key:
-            return False
-        
-        try:
-            # Convert ProductData to dict format expected by WordPress
-            product_dict = self._convert_to_wordpress_format(product_data)
-            
-            # Prepare as JSONL
-            jsonl_data = json.dumps(product_dict) + '\n'
-            files = {'file': ('single_product.jsonl', jsonl_data)}
-            headers = {'Authorization': f'Bearer {self.api_key}'}
-            
-            response = requests.post(self.api_url, files=files, headers=headers, timeout=10)
-            response.raise_for_status()
-            
-            logging.info(f"🚀 Live streamed product {product_data.product_id} to WordPress")
-            return True
-            
-        except Exception as e:
-            logging.error(f"❌ Failed to stream product {product_data.product_id}: {e}")
-            return False
-    
-    def stream_batch(self, products: List[ProductData]) -> bool:
-        """Stream a batch of products to WordPress"""
-        if not self.api_url or not self.api_key or not products:
-            return False
-        
-        try:
-            # Convert all products to WordPress format
-            product_dicts = [self._convert_to_wordpress_format(p) for p in products]
-            
-            # Prepare as JSONL
-            jsonl_data = '\n'.join([json.dumps(p) for p in product_dicts])
-            files = {'file': ('batch.jsonl', jsonl_data)}
-            headers = {'Authorization': f'Bearer {self.api_key}'}
-            
-            response = requests.post(self.api_url, files=files, headers=headers, timeout=30)
-            response.raise_for_status()
-            
-            logging.info(f"✅ Successfully streamed batch of {len(products)} products to WordPress")
-            return True
-            
-        except Exception as e:
-            logging.error(f"❌ Failed to stream batch: {e}")
-            return False
-    
-    def _convert_to_wordpress_format(self, product_data: ProductData) -> Dict:
-        """Convert ProductData to WordPress-compatible format"""
-        return {
-            "ProductID": product_data.product_id,
-            "Name": product_data.name,
-            "SKU": product_data.sku,
-            "ShortDescription": product_data.short_description,
-            "ImageURL": product_data.image_url,
-            "ProductURL": product_data.product_url,
-            "SupplierInfo": product_data.supplier_info,
-            "PricingTable": product_data.pricing_info,
-            "ProductionInfo": product_data.production_info,
-            "Attributes": product_data.attributes,
-            "Imprint": product_data.imprinting,
-            "Shipping": product_data.shipping,
-            "Variants": product_data.variants,
-            "Warnings": product_data.warnings,
-            "Services": product_data.services,
-            "Images": product_data.images,
-            "VirtualSampleImages": product_data.virtual_samples,
-            "ExtractionMethod": product_data.extraction_method,
-            "ExtractionTime": product_data.extraction_time,
-            "ScrapedDate": datetime.now().isoformat()
-        }
 
-class Deduplicator:
-    """Handles product deduplication"""
-    
-    def __init__(self, output_file: str = None):
-        self.output_file = output_file or os.getenv("DETAILS_OUTPUT_FILE", "final_product_details.jsonl")
-        self.scraped_ids = self._load_scraped_ids()
-        self.wordpress_integrator = WordPressIntegrator()
-        self.existing_product_ids, self.existing_skus = self.wordpress_integrator.get_existing_products()
-    
-    def _load_scraped_ids(self) -> Set[str]:
-        """Load already scraped product IDs"""
-        scraped_ids = set()
-        
-        if os.path.exists(self.output_file):
-            with open(self.output_file, 'r') as f:
-                for line in f:
-                    try:
-                        data = json.loads(line)
-                        if 'ProductID' in data and data['ProductID']:
-                            scraped_ids.add(str(data['ProductID']))
-                    except Exception:
-                        continue
-        
-        return scraped_ids
-    
-    def filter_products(self, product_links: List[Dict], mode: str = 'scrape') -> List[Dict]:
-        """Filter products based on deduplication rules"""
-        filtered_links = []
-        skipped_count = 0
-        
-        for link in product_links:
-            product_id = str(link.get('id'))
-            
-            # Always skip if already scraped in this run
-            if product_id in self.scraped_ids:
-                skipped_count += 1
-                continue
-            
-            if mode == 'scrape':
-                # Only scrape if not in WordPress store
-                if product_id not in self.existing_product_ids:
-                    filtered_links.append(link)
-                else:
-                    skipped_count += 1
-            elif mode == 'override':
-                # Scrape all
-                filtered_links.append(link)
-            elif mode == 'sync':
-                # Check last_modified for sync mode
-                # This would require fetching last_modified from WordPress
-                # For now, use simple logic
-                if product_id not in self.existing_product_ids:
-                    filtered_links.append(link)
-                else:
-                    skipped_count += 1
-            else:
-                # Default: behave like scrape
-                if product_id not in self.existing_product_ids:
-                    filtered_links.append(link)
-                else:
-                    skipped_count += 1
-        
-        logging.info(f"🔍 Filtered {len(filtered_links)} products (skipped {skipped_count} duplicates, mode={mode})")
-        return filtered_links
-    
-    def mark_as_scraped(self, product_id: str):
-        """Mark a product as scraped"""
-        self.scraped_ids.add(product_id)
-
-class APIScraper(BaseScraper):
-    """API-based product scraper with comprehensive features"""
-    
-    def __init__(self, session_manager: SessionManager, config: ScrapingConfig = None):
+class ApiScraper(BaseScraper):
+    def __init__(self, session_manager):
         super().__init__(session_manager)
-        self.config = config or ScrapingConfig()
-        self.rate_limiter = RateLimiter(
-            self.config.max_requests_per_minute,
-            self.config.min_delay
-        )
-        self.wordpress_integrator = WordPressIntegrator()
-        self.deduplicator = Deduplicator()
-        self.session = requests.Session()
-        self._setup_session()
-        
+        self.load_env()
+        self.USERNAME = os.getenv("ESP_USERNAME")
+        self.PASSWORD = os.getenv("ESP_PASSWORD")
+        self.SEARCH_API_URL = os.getenv("SEARCH_API_URL")
+        self.GOTO_PAGE_API_URL = os.getenv("GOTO_PAGE_API_URL")
+        self.PRODUCTS_URL = os.getenv("PRODUCTS_URL")
+        self.PRODUCT_URL_TEMPLATE = os.getenv("PRODUCT_URL_TEMPLATE")
+        if not self.PRODUCT_URL_TEMPLATE:
+            # Use ESP Web product details URL as default if not set
+            self.PRODUCT_URL_TEMPLATE = (
+                "https://espweb.asicentral.com/Default.aspx?appCode=WESP&appVersion=4.1.0"
+                "&page=ProductDetails&referrerPage=ProductResults&referrerModule=PRDRES&refModSufx=Generic"
+                "&PCUrl=1&productID={product_id}&autoLaunchVS=0&tab=list"
+            )
         # Ensure data directory exists
         data_dir = os.path.join(os.path.dirname(__file__), 'data')
         os.makedirs(data_dir, exist_ok=True)
-        
-        self.output_file = os.getenv("DETAILS_OUTPUT_FILE", os.path.join(data_dir, "api_product_details.jsonl"))
-        self.links_file = os.getenv("DETAILS_LINKS_FILE", os.path.join(data_dir, "api_scraped_links.jsonl"))
-    
-    def _setup_session(self):
-        """Setup requests session with proper headers and cookies"""
-        headers = {
-            'Accept': 'application/json, text/plain, */*',
-            'Content-Type': 'application/json;charset=UTF-8',
-            'Referer': os.getenv("PRODUCTS_URL"),
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        self.OUTPUT_FILE = os.getenv("OUTPUT_FILE", os.path.join(data_dir, "api_scraped_links.jsonl"))
+        self.TOTAL_PAGES_TO_SCRAPE = int(os.getenv("TOTAL_PAGES_TO_SCRAPE", 100))
+        # Improved required variable check
+        required_vars = {
+            "ESP_USERNAME": self.USERNAME,
+            "ESP_PASSWORD": self.PASSWORD,
+            "SEARCH_API_URL": self.SEARCH_API_URL,
+            "GOTO_PAGE_API_URL": self.GOTO_PAGE_API_URL,
+            "PRODUCTS_URL": self.PRODUCTS_URL,
         }
-        self.session.headers.update(headers)
-        
-        # Load session cookies
-        cookies, page_key, search_id = self.session_manager.load_state()
-        if cookies:
-            for cookie in cookies:
-                self.session.cookies.set(cookie['name'], cookie['value'], domain=cookie.get('domain'))
-            logging.info("✅ Session cookies loaded")
-    
-    def login(self, force_relogin: bool = False):
-        """Login to ESP using Selenium and save session"""
-        # Use existing login logic from scrape_product_details.py
-        # This is a simplified version - you can enhance it
-        logging.info("🔐 Logging in to ESP...")
-        
-        # For now, assume session is valid if cookies exist
-        cookies, page_key, search_id = self.session_manager.load_state()
-        if cookies and page_key and search_id and not force_relogin:
-            logging.info("✅ Using existing session")
+        missing = [k for k, v in required_vars.items() if not v]
+        if missing:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+
+    def extract_products_from_json(self, response_data):
+        products = []
+        if not response_data or 'd' not in response_data:
+            return products
+        try:
+            data_d = response_data['d'] if isinstance(response_data['d'], dict) else json.loads(response_data['d'])
+        except (json.JSONDecodeError, TypeError):
+            data_d = response_data['d']
+        product_results = data_d.get('Results', [])
+        for product in product_results:
+            product_id = product.get('ProductId') or product.get('Id')
+            if product_id:
+                product_url = self.PRODUCT_URL_TEMPLATE.format(product_id=product_id)
+                products.append({
+                    "url": product_url,
+                    "id": product_id,
+                    "name": product.get("ProductName") or product.get("Name", "N/A"),
+                })
+        return products
+
+    def collect_product_links(self, force_relogin=False, pages=None, limit=None, new_only=False, detail_output_file=None, resume_missing=False):
+        checkpoint_file = self.OUTPUT_FILE.replace('.jsonl', '.checkpoint.txt')
+        metadata_file = self.OUTPUT_FILE.replace('.jsonl', '.meta.json')
+        batch_size = 3  # Reduced batch size for better rate limiting
+        delay = 2  # Increased delay between page requests
+        batch_delay = 5  # Longer delay between batches
+        max_requests_per_minute = 20  # Rate limiting
+        request_times = []
+
+        def check_rate_limit():
+            """Check if we're within rate limits"""
+            current_time = time.time()
+            # Remove requests older than 1 minute
+            request_times[:] = [t for t in request_times if current_time - t < 60]
+            if len(request_times) >= max_requests_per_minute:
+                wait_time = 60 - (current_time - request_times[0])
+                if wait_time > 0:
+                    logging.warning(f"⏸️ Rate limit reached. Waiting {wait_time:.1f} seconds...")
+                    time.sleep(wait_time)
+                    return check_rate_limit()  # Recursive check
             return True
-        
-        # If no valid session, you would need to implement Selenium login here
-        logging.warning("⚠️ No valid session found - please run the HTML scraper first to create session")
-        return False
-    
-    def scrape_product_api(self, product_id: str) -> Optional[ProductData]:
-        """Scrape a single product using API"""
-        self.rate_limiter.wait_if_needed()
-        
-        api_url = f"https://api.asicentral.com/v1/products/{product_id}.json"
-        
-        try:
-            start_time = time.time()
-            response = self.session.get(api_url, timeout=self.config.timeout)
-            extraction_time = time.time() - start_time
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                # Extract comprehensive product data
-                product_data = ProductData(
-                    product_id=str(data.get('Id', product_id)),
-                    name=data.get('Name', ''),
-                    sku=data.get('SKU', ''),
-                    description=data.get('Description', ''),
-                    short_description=data.get('ShortDescription', ''),
-                    image_url=data.get('ImageUrl', ''),
-                    product_url=data.get('ProductUrl', ''),
-                    supplier_info=self._extract_supplier_info(data),
-                    pricing_info=self._extract_pricing_info(data),
-                    production_info=self._extract_production_info(data),
-                    attributes=self._extract_attributes(data),
-                    imprinting=self._extract_imprinting_info(data),
-                    shipping=self._extract_shipping_info(data),
-                    variants=data.get('Variants', []),
-                    warnings=data.get('Warnings', []),
-                    services=data.get('Services', []),
-                    images=data.get('Images', []),
-                    virtual_samples=data.get('VirtualSampleImages', []),
-                    raw_data=data,
-                    extraction_time=extraction_time
-                )
-                
-                logging.info(f"✅ Scraped product {product_id} in {extraction_time:.3f}s")
-                return product_data
-                
-            else:
-                logging.warning(f"⚠️ Failed to scrape product {product_id}: HTTP {response.status_code}")
-                return None
-                
-        except Exception as e:
-            logging.error(f"❌ Error scraping product {product_id}: {e}")
-            return None
-    
-    def _extract_supplier_info(self, data: Dict) -> Dict:
-        """Extract supplier information from API data"""
-        supplier_data = data.get('Supplier', {})
-        return {
-            'id': supplier_data.get('Id'),
-            'name': supplier_data.get('Name'),
-            'asi_number': supplier_data.get('AsiNumber'),
-            'email': supplier_data.get('Email'),
-            'phone': supplier_data.get('Phone', {}).get('Primary'),
-            'toll_free': supplier_data.get('Phone', {}).get('TollFree'),
-            'fax': supplier_data.get('Fax', {}).get('Primary'),
-            'websites': supplier_data.get('Websites', []),
-            'rating': supplier_data.get('Rating', {}).get('Rating'),
-            'companies': supplier_data.get('Rating', {}).get('Companies'),
-            'transactions': supplier_data.get('Rating', {}).get('Transactions'),
-            'marketing_policy': supplier_data.get('MarketingPolicy'),
-            'is_minority_owned': supplier_data.get('IsMinorityOwned'),
-            'is_union_available': supplier_data.get('IsUnionAvailable')
-        }
-    
-    def _extract_pricing_info(self, data: Dict) -> Dict:
-        """Extract pricing information from API data"""
-        return {
-            'lowest_price': data.get('LowestPrice'),
-            'highest_price': data.get('HighestPrice'),
-            'currency': data.get('Currency'),
-            'currencies': data.get('Currencies', []),
-            'prices': data.get('Prices', [])
-        }
-    
-    def _extract_production_info(self, data: Dict) -> Dict:
-        """Extract production information from API data"""
-        return {
-            'production_time': data.get('ProductionTime', []),
-            'origin': data.get('Origin', []),
-            'trade_names': data.get('TradeNames', []),
-            'categories': data.get('Categories', []),
-            'themes': data.get('Themes', []),
-            'weight': data.get('Weight'),
-            'dimensions': data.get('Dimensions', {}),
-            'is_assembled': data.get('IsAssembled'),
-            'battery_info': data.get('BatteryInfo'),
-            'warranty_info': data.get('WarrantyInfo')
-        }
-    
-    def _extract_attributes(self, data: Dict) -> Dict:
-        """Extract product attributes from API data"""
-        attributes = data.get('Attributes', {})
-        return {
-            'colors': attributes.get('Colors', {}).get('Values', []),
-            'sizes': attributes.get('Sizes', {}).get('Values', []),
-            'materials': attributes.get('Materials', {}).get('Values', []),
-            'styles': attributes.get('Styles', {}).get('Values', []),
-            'features': attributes.get('Features', {}).get('Values', [])
-        }
-    
-    def _extract_imprinting_info(self, data: Dict) -> Dict:
-        """Extract imprinting information from API data"""
-        imprinting = data.get('Imprinting', {})
-        return {
-            'methods': imprinting.get('Methods', {}).get('Values', []),
-            'colors': imprinting.get('Colors', {}).get('Values', []),
-            'services': imprinting.get('Services', {}).get('Values', []),
-            'locations': imprinting.get('Locations', {}).get('Values', []),
-            'full_color_process': imprinting.get('FullColorProcess'),
-            'personalization': imprinting.get('Personalization'),
-            'sold_unimprinted': imprinting.get('SoldUnimprinted')
-        }
-    
-    def _extract_shipping_info(self, data: Dict) -> Dict:
-        """Extract shipping information from API data"""
-        shipping = data.get('Shipping', {})
-        return {
-            'weight_unit': shipping.get('WeightUnit'),
-            'weight_per_package': shipping.get('WeightPerPackage'),
-            'package_unit': shipping.get('PackageUnit'),
-            'items_per_package': shipping.get('ItemsPerPackage'),
-            'package_in_plain_box': shipping.get('PackageInPlainBox'),
-            'fob_points': shipping.get('FOBPoints', {}).get('Values', []),
-            'dimensions': shipping.get('Dimensions', {})
-        }
-    
-    def read_product_links(self) -> List[Dict]:
-        """Read product links from file"""
-        links = []
-        if not os.path.exists(self.links_file):
-            return links
-        
-        with open(self.links_file, 'r', encoding='utf-8') as f:
-            for line in f:
+
+        def make_rate_limited_request(session, url, payload):
+            """Make a request with rate limiting"""
+            check_rate_limit()
+            request_times.append(time.time())
+            return session.post(url, json=payload, timeout=30)
+
+        def extract_json_objects(text):
+            decoder = json.JSONDecoder()
+            idx = 0
+            length = len(text)
+            while idx < length:
                 try:
-                    links.append(json.loads(line))
-                except Exception as e:
-                    logging.warning(f"⚠️ Invalid JSON line in links file: {e}")
-        
-        return links
-    
-    def scrape_all_products(self, mode: str = 'scrape', limit: int = None):
-        """Scrape all products using API with comprehensive features"""
-        
-        # Login first
-        if not self.login():
-            logging.error("❌ Login failed")
-            return
-        
-        # Read and filter product links
-        product_links = self.read_product_links()
-        filtered_links = self.deduplicator.filter_products(product_links, mode)
-        
-        if limit:
-            filtered_links = filtered_links[:limit]
-        
-        logging.info(f"🚀 Starting API scraping of {len(filtered_links)} products (mode={mode})")
-        
-        # Initialize batch processing
-        batch = []
-        products_scraped = 0
-        
-        # Open output file
-        with open(self.output_file, 'a', encoding='utf-8') as f_out:
-            for i, link_info in enumerate(filtered_links):
-                product_id = str(link_info.get('id'))
-                url = link_info.get('url')
-                
-                if not product_id or not url:
-                    continue
-                
-                logging.info(f"--- ({i+1}/{len(filtered_links)}) Processing Product ID: {product_id}")
-                
-                # Scrape product using API
-                product_data = self.scrape_product_api(product_id)
-                
-                if product_data:
-                    # Convert to dict for JSON output
-                    product_dict = self.wordpress_integrator._convert_to_wordpress_format(product_data)
-                    
-                    # Write to file
-                    f_out.write(json.dumps(product_dict) + '\n')
-                    f_out.flush()
-                    
-                    # Add to batch
-                    batch.append(product_data)
-                    products_scraped += 1
-                    
-                    # Mark as scraped
-                    self.deduplicator.mark_as_scraped(product_id)
-                    
-                    # Stream to WordPress if enabled
-                    if self.config.enable_streaming:
-                        self.wordpress_integrator.stream_single_product(product_data)
-                    
-                    # Process batch if full
-                    if len(batch) >= self.config.batch_size:
-                        self._process_batch(batch)
-                        batch = []
-                        
-                        # Batch pause
-                        if (i + 1) < len(filtered_links):
-                            logging.info(f"⏸️ Batch pause for {self.config.batch_pause}s...")
-                            time.sleep(self.config.batch_pause)
-                
-                else:
-                    logging.warning(f"⚠️ Failed to scrape product {product_id}")
-            
-            # Process final batch
-            if batch:
-                self._process_batch(batch)
-        
-        logging.info(f"✅ API scraping completed: {products_scraped} products processed")
-    
-    def _process_batch(self, batch: List[ProductData]):
-        """Process a batch of products"""
-        if not batch:
-            return
-        
-        # Save batch file
-        timestamp = int(time.time())
-        batch_filename = f"batch_{timestamp}_{len(batch)}.jsonl"
-        
+                    obj, end = decoder.raw_decode(text, idx)
+                    yield obj
+                    idx = end
+                    while idx < length and text[idx] in ' \r\n\t':
+                        idx += 1
+                except json.JSONDecodeError:
+                    break
+        # Load already-scraped product IDs if new_only is set
+        already_scraped_ids = set()
+        if new_only and detail_output_file and os.path.exists(detail_output_file):
+            with open(detail_output_file, 'r') as f:
+                for i, line in enumerate(f, 1):
+                    try:
+                        data = json.loads(line)
+                        pid = data.get('productId') or data.get('ProductID') or data.get('id')
+                        if pid:
+                            already_scraped_ids.add(str(pid))
+                    except Exception as e:
+                        found_any = False
+                        for obj in extract_json_objects(line):
+                            pid = obj.get('productId') or obj.get('ProductID') or obj.get('id')
+                            if pid:
+                                already_scraped_ids.add(str(pid))
+                                found_any = True
+                        if found_any:
+                            logging.warning(f"Line {i} in {detail_output_file} contained multiple JSON objects. Used fallback parser.")
+                        else:
+                            logging.error(f"Skipping invalid JSON line {i} in {detail_output_file}: {e} | Content: {line.strip()}")
+            logging.info(f"🔎 Loaded {len(already_scraped_ids)} already-scraped product IDs from {detail_output_file}")
+        # Load all collected IDs from output file (for deduplication)
+        collected_ids = set()
+        if os.path.exists(self.OUTPUT_FILE):
+            with open(self.OUTPUT_FILE, 'r') as f:
+                for i, line in enumerate(f, 1):
+                    try:
+                        data = json.loads(line)
+                        pid = data.get('id') or data.get('productId') or data.get('ProductID')
+                        if pid:
+                            collected_ids.add(str(pid))
+                    except Exception as e:
+                        found_any = False
+                        for obj in extract_json_objects(line):
+                            pid = obj.get('id') or obj.get('productId') or obj.get('ProductID')
+                            if pid:
+                                collected_ids.add(str(pid))
+                                found_any = True
+                        if found_any:
+                            logging.warning(f"Line {i} in {self.OUTPUT_FILE} contained multiple JSON objects. Used fallback parser.")
+                        else:
+                            logging.error(f"Skipping invalid JSON line {i} in {self.OUTPUT_FILE}: {e} | Content: {line.strip()}")
+        # Always fetch first page for session and ResultsTotal
+        def get_session_and_ids():
+            cookies, page_key, search_id = self.session_manager.load_state()
+            session = requests.Session()
+            headers = {
+                'Accept': 'application/json, text/plain, */*',
+                'Content-Type': 'application/json;charset=UTF-8',
+                'Referer': self.PRODUCTS_URL,
+                'User-Agent': 'Mozilla/5.0',
+            }
+            session.headers.update(headers)
+            if cookies:
+                for cookie in cookies:
+                    session.cookies.set(cookie['name'], cookie['value'], domain=cookie.get('domain'))
+            return session, page_key, search_id
+        session, page_key, search_id = get_session_and_ids()
+        search_payload = {
+            "extraParams": f"SearchId={search_id}",
+            "type": "SavedSearch",
+            "adApplicationCode": "ESPO",
+            "appCode": "WESP",
+            "appVersion": "4.1.0",
+            "pageKey": page_key,
+            "searchState": "",
+            "stats": ""
+        }
+        # Fetch first page for ResultsTotal and ResultsPerPage
         try:
-            with open(batch_filename, 'w', encoding='utf-8') as f:
-                for product in batch:
-                    product_dict = self.wordpress_integrator._convert_to_wordpress_format(product)
-                    f.write(json.dumps(product_dict) + '\n')
-            
-            # Also save to data directory
-            data_dir = os.path.join(os.path.dirname(__file__), 'data')
-            data_batch_filename = os.path.join(data_dir, batch_filename)
-            with open(data_batch_filename, 'w', encoding='utf-8') as f:
-                for product in batch:
-                    product_dict = self.wordpress_integrator._convert_to_wordpress_format(product)
-                    f.write(json.dumps(product_dict) + '\n')
-            
-            logging.info(f"💾 Batch saved: {batch_filename}")
-            
-            # Stream to WordPress if enabled
-            if self.config.enable_wordpress_integration:
-                self.wordpress_integrator.stream_batch(batch)
-                
+            response = make_rate_limited_request(session, self.SEARCH_API_URL, search_payload)
+            if response.status_code in (401, 403):
+                raise Exception("Session not authenticated (status code)")
+            initial_data = response.json()
+            logging.info("🔎 First page API response:")
+            search_state_str = initial_data.get('d', {}).get('SearchState')
+            if not search_state_str:
+                raise Exception("No SearchState in response (possible login required)")
+            results_per_page = initial_data['d'].get('ResultsPerPage', 22)
+            results_total = initial_data['d'].get('ResultsTotal', 0)
+            if results_total:
+                logging.info(f"📊 Total products available: {results_total}")
+            else:
+                logging.warning("⚠️ Warning: resultsTotal not found in API response.")
+            try:
+                total_pages_dynamic = math.ceil(results_total / results_per_page) if results_per_page else 1
+            except Exception:
+                total_pages_dynamic = self.TOTAL_PAGES_TO_SCRAPE
+            # Update metadata file with latest resultsTotal
+            try:
+                with open(metadata_file, 'w') as meta_f:
+                    json.dump({
+                        'ResultsPerPage': results_per_page,
+                        'resultsTotal': results_total,
+                        'totalPages': total_pages_dynamic
+                    }, meta_f, indent=2)
+            except Exception as meta_e:
+                logging.warning(f"⚠️ Could not write metadata file: {meta_e}")
         except Exception as e:
-            logging.error(f"❌ Failed to process batch: {e}")
+            logging.warning(f"⚠️ Saved session failed or expired: {e}. Launching Selenium login...")
+            page_key, search_id = self.session_manager.selenium_login_and_get_session_data(
+                self.USERNAME, self.PASSWORD, self.PRODUCTS_URL, force_relogin=True
+            )
+            if not page_key or not search_id:
+                logging.error("❌ Could not get pageKey or searchId after login. Aborting.")
+                return
+            session, _, _ = get_session_and_ids()
+            search_payload["pageKey"] = page_key
+            search_payload["extraParams"] = f"SearchId={search_id}"
+            try:
+                response = make_rate_limited_request(session, self.SEARCH_API_URL, search_payload)
+                response.raise_for_status()
+                initial_data = response.json()
+                logging.info("🔎 First page API response:")
+                search_state_str = initial_data.get('d', {}).get('SearchState')
+                if not search_state_str:
+                    logging.error("❌ Could not extract SearchState from initial response. Aborting.")
+                    return
+                results_per_page = initial_data['d'].get('ResultsPerPage', 22)
+                results_total = initial_data['d'].get('ResultsTotal', 0)
+                if results_total:
+                    logging.info(f"📊 Total products available: {results_total}")
+                else:
+                    logging.warning("⚠️ Warning: resultsTotal not found in API response.")
+                try:
+                    total_pages_dynamic = math.ceil(results_total / results_per_page) if results_per_page else 1
+                except Exception:
+                    total_pages_dynamic = self.TOTAL_PAGES_TO_SCRAPE
+                # Update metadata file with latest resultsTotal
+                try:
+                    with open(metadata_file, 'w') as meta_f:
+                        json.dump({
+                            'ResultsPerPage': results_per_page,
+                            'resultsTotal': results_total,
+                            'totalPages': total_pages_dynamic
+                        }, meta_f, indent=2)
+                except Exception as meta_e:
+                    logging.warning(f"⚠️ Could not write metadata file: {meta_e}")
+            except Exception as e2:
+                logging.error(f"❌ Initial SearchProduct request failed after login: {e2}")
+                return
+        # Helper function to fetch and write new links for a page
+        def fetch_and_write_page(page_num, total_pages, results_total):
+            goto_payload = {
+                "page": page_num, "adApplicationCode": "ESPO", "appCode": "WESP", "appVersion": "4.1.0",
+                "extraParams": f"SearchId={search_id}", "pageKey": page_key, "searchState": search_state_str,
+                "stats": ""
+            }
+            try:
+                response = make_rate_limited_request(session, self.GOTO_PAGE_API_URL, goto_payload)
+                response.raise_for_status()
+                page_data = response.json()
+                new_products = self.extract_products_from_json(page_data)
+                if not new_products:
+                    return 0
+                page_new_links = 0
+                for product in new_products:
+                    pid = product.get('id') or product.get('productId') or product.get('ProductID')
+                    if new_only and pid and str(pid) in already_scraped_ids:
+                        continue  # skip already scraped
+                    if pid and str(pid) in collected_ids:
+                        continue  # skip already collected in output file
+                    with open(self.OUTPUT_FILE, 'a') as f_out:
+                        f_out.write(json.dumps(product) + '\n')
+                    collected_ids.add(str(pid))
+                    page_new_links += 1
+                logging.info(f"✅ Page {page_num} complete. {page_new_links} new products written. Total collected: {len(collected_ids)}/{results_total}")
+                return page_new_links
+            except Exception as e:
+                logging.error(f"❌ Request for page {page_num} failed: {e}")
+                return 0
+        # Heartbeat file logic
+        batch_dir = os.path.join(os.path.dirname(__file__), 'data')
+        heartbeat_file = os.path.join(batch_dir, 'scraper_heartbeat.txt')
+        def update_heartbeat():
+            with open(heartbeat_file, 'w') as hb:
+                hb.write(str(time.time()))
+        update_heartbeat()  # Initial heartbeat
+        last_heartbeat = time.time()
+        # Main collection logic
+        new_links_collected = 0
+        pages_processed = set()
+        total_pages = total_pages_dynamic
+        if resume_missing:
+            # Resume from checkpoint page + 1
+            if os.path.exists(checkpoint_file):
+                with open(checkpoint_file, 'r') as f:
+                    try:
+                        last_page = int(f.read().strip())
+                        start_page = last_page + 1
+                        logging.info(f"🔄 Resuming from page {start_page} (last completed: {last_page}) [RESUME-MISSING MODE]")
+                    except Exception:
+                        start_page = 1
+            else:
+                start_page = 1
+            current_page = start_page
+            while new_links_collected < (limit if limit is not None else results_total) and current_page <= total_pages:
+                batch_end = min(current_page + batch_size, total_pages + 1)
+                for page_num in range(current_page, batch_end):
+                    if page_num in pages_processed:
+                        continue
+                    pages_processed.add(page_num)
+                    page_new_links = fetch_and_write_page(page_num, total_pages, results_total)
+                    new_links_collected += page_new_links
+                    time.sleep(delay)
+                    # Save checkpoint after each page
+                    with open(checkpoint_file, 'w') as f:
+                        f.write(str(page_num))
+                    # Update heartbeat every 20 seconds
+                    if time.time() - last_heartbeat > 20:
+                        update_heartbeat()
+                        last_heartbeat = time.time()
+                    if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
+                        logging.warning(f"⚠️ Limit of {limit} reached, or all products collected.")
+                        logging.info(f"✅ Link collection complete up to page {page_num}.")
+                        logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+                        logging.info(f"✅ Collected {new_links_collected} new product links.")
+                        return {'all_links_collected': False, 'new_links_collected': new_links_collected}
+                current_page = batch_end
+                time.sleep(batch_delay)
+            logging.info(f"✅ Link collection complete up to page {current_page-1}.")
+            logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+            logging.info(f"✅ Collected {new_links_collected} new product links.")
+            return {'all_links_collected': False, 'new_links_collected': new_links_collected}
+        else:
+            # Default to new-only mode (fetch from top)
+            for page_num in [1, 2]:
+                if page_num > total_pages:
+                    break
+                if page_num in pages_processed:
+                    continue
+                pages_processed.add(page_num)
+                page_new_links = fetch_and_write_page(page_num, total_pages, results_total)
+                new_links_collected += page_new_links
+                time.sleep(delay)
+                # Save checkpoint after each page
+                with open(checkpoint_file, 'w') as f:
+                    f.write(str(page_num))
+                # Update heartbeat every 20 seconds
+                if time.time() - last_heartbeat > 20:
+                    update_heartbeat()
+                    last_heartbeat = time.time()
+                if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
+                    logging.warning(f"⚠️ Limit of {limit} reached, or all products collected.")
+                    logging.info(f"✅ Link collection complete up to page {page_num}.")
+                    logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+                    logging.info(f"✅ Collected {new_links_collected} new product links.")
+                    return {'all_links_collected': False, 'new_links_collected': new_links_collected}
+            current_page = 3
+            while new_links_collected < (limit if limit is not None else results_total) and current_page <= total_pages:
+                batch_end = min(current_page + batch_size, total_pages + 1)
+                for page_num in range(current_page, batch_end):
+                    if page_num in pages_processed:
+                        continue
+                    pages_processed.add(page_num)
+                    page_new_links = fetch_and_write_page(page_num, total_pages, results_total)
+                    new_links_collected += page_new_links
+                    time.sleep(delay)
+                    # Save checkpoint after each page
+                    with open(checkpoint_file, 'w') as f:
+                        f.write(str(page_num))
+                    # Update heartbeat every 20 seconds
+                    if time.time() - last_heartbeat > 20:
+                        update_heartbeat()
+                        last_heartbeat = time.time()
+                    if (limit is not None and new_links_collected >= limit) or len(collected_ids) >= results_total:
+                        logging.warning(f"⚠️ Limit of {limit} reached, or all products collected.")
+                        logging.info(f"✅ Link collection complete up to page {page_num}.")
+                        logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+                        logging.info(f"✅ Collected {new_links_collected} new product links.")
+                        return {'all_links_collected': False, 'new_links_collected': new_links_collected}
+                current_page = batch_end
+                time.sleep(batch_delay)
+            logging.info(f"✅ Link collection complete up to page {current_page-1}.")
+            logging.info(f"Links saved to '{self.OUTPUT_FILE}'. Checkpoint saved to '{checkpoint_file}'. Metadata saved to '{metadata_file}'.")
+            logging.info(f"✅ Collected {new_links_collected} new product links.")
+            return {'all_links_collected': False, 'new_links_collected': new_links_collected}
+
+def get_authenticated_session_data(driver):
+    """
+    After login, extracts all necessary session data, including the Authorization token.
+    """
+    logging.info("✅ Login successful. Extracting initial session data...")
+    
+    # Wait for a key element to ensure the page is loaded
+    WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "hdnPageStateKey")))
+    
+    # 1. Get Cookies
+    cookies = driver.get_cookies()
+    requests_cookies = {cookie['name']: cookie['value'] for cookie in cookies}
+    logging.info(f"🍪 Extracted {len(requests_cookies)} cookies.")
+    
+    # 2. Get pageKey
+    page_key = driver.find_element(By.ID, "hdnPageStateKey").get_attribute('value')
+    logging.info(f"🔑 Extracted pageKey: {page_key}")
+
+    # 3. Get SearchId from the final URL
+    search_id = None
+    try:
+        current_url = driver.current_url
+        parsed_url = urllib.parse.urlparse(current_url)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        if 'SearchID' in query_params:
+            search_id = query_params['SearchID'][0]
+            logging.info(f"🆔 Extracted SearchID from URL: {search_id}")
+    except Exception as e:
+        logging.error(f"❌ Error extracting SearchID from URL: {e}")
+
+    # 4. Get Authorization Token from JavaScript variable
+    auth_token = None
+    try:
+        # The debug file showed this token in the 'asi.app._tenantToken' variable.
+        # Note: This is a different token from the Authorization header, but it's
+        # the most likely candidate for a session-specific API token.
+        # Let's try extracting the Authorization header directly from the JS context if possible
+        # For now, let's assume no extra auth header is needed beyond the cookie.
+        # The 'Authorization' header in the text file seems to be a red herring.
+        pass
+    except Exception as e:
+        logging.error(f"❌ Error extracting Auth Token: {e}")
+
+    return requests_cookies, page_key, search_id
+
+def get_authenticated_cookies():
+    """
+    Uses Selenium to log into the website and returns the session cookies
+    and the initial pageKey.
+    """
+    logging.info("🤖 Launching Selenium to get authenticated session...")
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    
+    driver = webdriver.Chrome(
+        service=Service(ChromeDriverManager().install()),
+        options=options
+    )
+
+    try:
+        driver.get(PRODUCTS_URL)
+        time.sleep(3)
+
+        logging.info("🔒 Login page detected. Logging in...")
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "asilogin_UserName")))
+        
+        driver.find_element(By.ID, "asilogin_UserName").send_keys(USERNAME)
+        driver.find_element(By.ID, "asilogin_Password").send_keys(PASSWORD)
+        driver.find_element(By.ID, "btnLogin").click()
+
+        # NEW: Handle the "already logged in" alert
+        try:
+            logging.info("⏳ Waiting for potential login alert...")
+            WebDriverWait(driver, 10).until(EC.alert_is_present())
+            alert = driver.switch_to.alert
+            logging.warning(f"⚠️ Alert detected: {alert.text}")
+            alert.accept()
+            logging.info("✅ Alert accepted.")
+        except Exception:
+            logging.info("ℹ️ No login alert appeared, continuing.")
+        
+        # Wait for login to complete by waiting for an element on the products page
+        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, ".prod-count")))
+        
+        return get_authenticated_session_data(driver)
+
+    except Exception as e:
+        logging.error(f"❌ Selenium login failed: {e}")
+        return None, None, None
+    finally:
+        driver.quit()
+        logging.info("🤖 Selenium browser closed.")
+
+def extract_links_from_html(html_content):
+    """Parses HTML to find product links and update dates."""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    products = []
+    
+    # The API returns a list of product divs
+    product_divs = soup.select('.prod-container')
+    
+    for div in product_divs:
+        link_tag = div.select_one('.prod-title a')
+        update_date_tag = div.select_one('.last-update .ng-binding')
+        
+        if link_tag and 'href' in link_tag.attrs:
+            # Construct the full URL
+            base_url = "https://espweb.asicentral.com"
+            url = link_tag['href']
+            if not url.startswith('http'):
+                url = base_url + url
+            
+            update_date = update_date_tag.text.strip() if update_date_tag else "N/A"
+            
+            products.append({
+                "URL": url,
+                "UpdateDate": update_date
+            })
+    return products
+
+def format_stats_object(stats_obj):
+    """Formats the stats dictionary into the required string format."""
+    if not isinstance(stats_obj, dict):
+        return ""
+    # The order might matter, so we should try to match the original order if possible,
+    # but for now, this is a good first step.
+    return ",".join([f"{key}={value}" for key, value in stats_obj.items()])
 
 def main():
-    """Main function for API scraper"""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="API-based ESP Product Scraper")
-    parser.add_argument('--mode', choices=['scrape', 'override', 'sync'], default='scrape',
-                       help='Scraping mode: scrape (skip existing), override (all), sync (check timestamps)')
-    parser.add_argument('--limit', type=int, default=None, help='Limit number of products to scrape')
-    parser.add_argument('--batch-size', type=int, default=15, help='Batch size for processing')
-    parser.add_argument('--max-requests-per-minute', type=int, default=25, help='Rate limit')
-    parser.add_argument('--no-streaming', action='store_true', help='Disable live streaming')
-    parser.add_argument('--no-wordpress', action='store_true', help='Disable WordPress integration')
-    parser.add_argument('--force-relogin', action='store_true', help='Force fresh login')
-    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--pages', type=int, default=None, help='Number of pages to scrape')
+    parser.add_argument('--force-relogin', action='store_true', help='Force a fresh Selenium login')
+    parser.add_argument('--limit', type=int, default=None, help='Number of product links to collect (not pages)')
+    parser.add_argument('--new-only', action='store_true', help='Collect only new product links from the top (pages 1, 2, etc.)')
+    parser.add_argument('--resume-missing', action='store_true', help='Resume from checkpoint and continue collecting links from where you left off')
+    parser.add_argument('--detail-output-file', help='File containing already scraped product IDs')
     args = parser.parse_args()
-    
-    # Create configuration
-    config = ScrapingConfig(
-        batch_size=args.batch_size,
-        max_requests_per_minute=args.max_requests_per_minute,
-        enable_streaming=not args.no_streaming,
-        enable_wordpress_integration=not args.no_wordpress
-    )
-    
-    # Create session manager and scraper
     session_manager = SessionManager()
-    scraper = APIScraper(session_manager, config)
-    
-    # Run scraping
-    scraper.scrape_all_products(mode=args.mode, limit=args.limit)
+    scraper = ApiScraper(session_manager)
+    status = scraper.collect_product_links(
+        force_relogin=args.force_relogin,
+        pages=args.pages,
+        limit=args.limit,
+        new_only=args.new_only,
+        detail_output_file=args.detail_output_file,
+        resume_missing=args.resume_missing
+    )
+    if status and status.get('all_links_collected'):
+        logging.info("All links already collected. You may proceed to detail scraping.")
+    elif status:
+        logging.info(f"New links collected: {status.get('new_links_collected', 0)}")
 
 if __name__ == "__main__":
     main() 
