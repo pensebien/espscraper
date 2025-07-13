@@ -37,8 +37,8 @@ class ProductData:
     raw_data: Dict
     extraction_time: float
     extraction_method: str = "api"
-    scraped_date: str = None
-    related_products: List[Dict] = None
+    scraped_date: str = ""
+    related_products: List[Dict] = ""
     # Use snake_case for new fields
     product_number: str = ""
     vendor_product_url: str = ""

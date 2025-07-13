@@ -324,6 +324,56 @@ class BatchProcessor:
             logging.error(f"❌ Error during batch validation: {e}")
             return False
 
+    def process_batches_for_import(
+        self, limit: int, mode: str, existing_products: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Yield products for import up to the global limit, respecting mode.
+        - mode: 'sync' (only new or updated products) or 'override' (all products)
+        - existing_products: dict mapping product_id to last update date in store
+        """
+        imported = 0
+        batch_files = [
+            f
+            for f in sorted(os.listdir(self.batch_dir))
+            if f.startswith(self.batch_prefix) and f.endswith(".jsonl")
+        ]
+        for batch_file in batch_files:
+            batch_path = os.path.join(self.batch_dir, batch_file)
+            with open(batch_path, "r") as f:
+                for line in f:
+                    if imported >= limit:
+                        return
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        product = json.loads(line)
+                        product_id = str(
+                            product.get("ProductID") or product.get("product_id")
+                        )
+                        scraped_date = product.get("scrapedDate") or product.get(
+                            "scraped_date"
+                        )
+                        if mode == "sync" and existing_products:
+                            store_info = existing_products.get(product_id)
+                            if store_info:
+                                store_date = store_info.get(
+                                    "last_modified"
+                                ) or store_info.get("last_updated")
+                                if (
+                                    store_date
+                                    and scraped_date
+                                    and scraped_date <= store_date
+                                ):
+                                    continue  # skip, not newer
+                        yield product
+                        imported += 1
+                    except Exception as e:
+                        logging.warning(
+                            f"⚠️ Error processing product in {batch_file}: {e}"
+                        )
+
 
 def main():
     """Test the batch processor"""
