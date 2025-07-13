@@ -1,6 +1,8 @@
 name: API Scraper (Batch Processing)
 
 on:
+  schedule:
+    - cron: '0 2,3,4 * * *'
   workflow_dispatch:
     inputs:
       batch_size:
@@ -32,6 +34,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: 💤 Fuzzy start (random delay and every-2-day check)
+        run: |
+          # Only run every 2 days (even days since epoch)
+          if [ $(( $(date +%s) / 86400 % 2 )) -ne 0 ]; then
+            echo "Not a scheduled run day, exiting."
+            exit 0
+          fi
+          # Sleep for a random time between 0 and 60 minutes
+          SLEEP_MINUTES=$(( RANDOM % 61 ))
+          echo "Sleeping for $SLEEP_MINUTES minutes to add fuzziness..."
+          sleep $(( SLEEP_MINUTES * 60 ))
+
       - name: 📥 Checkout repo
         uses: actions/checkout@v4
 
@@ -164,6 +178,12 @@ jobs:
           FORCE_LINK_COLLECTION=${FORCE_LINK_COLLECTION:-${{ github.event.inputs.force_link_collection || 'false' }}}
           MAX_LINK_AGE=${MAX_LINK_AGE:-${{ github.event.inputs.max_link_age || '48' }}}
 
+          # Only add the flag if FORCE_LINK_COLLECTION is true
+          FORCE_LINK_COLLECTION_FLAG=""
+          if [ "$FORCE_LINK_COLLECTION" = "true" ]; then
+            FORCE_LINK_COLLECTION_FLAG="--force-link-collection"
+          fi
+
           echo "Configuration:"
           echo "  Batch Size: $BATCH_SIZE"
           echo "  Product Limit: $PRODUCT_LIMIT"
@@ -176,7 +196,7 @@ jobs:
             --batch-size $BATCH_SIZE \
             --product-limit $PRODUCT_LIMIT \
             --mode $MODE \
-            --force-link-collection $FORCE_LINK_COLLECTION \
+            $FORCE_LINK_COLLECTION_FLAG \
             --max-link-age $MAX_LINK_AGE
         env:
           ESP_USERNAME: ${{ secrets.ESP_USERNAME }}
