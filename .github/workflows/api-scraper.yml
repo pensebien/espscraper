@@ -36,15 +36,19 @@ jobs:
     steps:
       - name: 💤 Fuzzy start (random delay and every-2-day check)
         run: |
-          # Only run every 2 days (even days since epoch)
-          if [ $(( $(date +%s) / 86400 % 2 )) -ne 0 ]; then
-            echo "Not a scheduled run day, exiting."
-            exit 0
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
+            # Only run every 2 days (even days since epoch)
+            if [ $(( $(date +%s) / 86400 % 2 )) -ne 0 ]; then
+              echo "Not a scheduled run day, exiting."
+              exit 0
+            fi
+            # Sleep for a random time between 0 and 60 minutes
+            SLEEP_MINUTES=$(( RANDOM % 61 ))
+            echo "Sleeping for $SLEEP_MINUTES minutes to add fuzziness..."
+            sleep $(( SLEEP_MINUTES * 60 ))
+          else
+            echo "Manual run detected, skipping fuzzy delay."
           fi
-          # Sleep for a random time between 0 and 60 minutes
-          SLEEP_MINUTES=$(( RANDOM % 61 ))
-          echo "Sleeping for $SLEEP_MINUTES minutes to add fuzziness..."
-          sleep $(( SLEEP_MINUTES * 60 ))
 
       - name: 📥 Checkout repo
         uses: actions/checkout@v4
