@@ -67,6 +67,55 @@ class ApiScraper(BaseScraper):
         if missing:
             raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
 
+    def _validate_and_repair_jsonl(self, filename):
+        """Validate and repair JSONL file if needed"""
+        if not os.path.exists(filename):
+            return True
+        
+        try:
+            valid_lines = []
+            invalid_count = 0
+            
+            with open(filename, 'r') as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        json.loads(line)
+                        valid_lines.append(line)
+                    except json.JSONDecodeError as e:
+                        invalid_count += 1
+                        logging.warning(f"⚠️ Found invalid JSON on line {line_num}: {e}")
+            
+            if invalid_count > 0:
+                logging.warning(f"🔧 Repairing {filename}: removing {invalid_count} invalid lines")
+                
+                # Create backup
+                backup_file = filename + '.backup'
+                import shutil
+                shutil.copy2(filename, backup_file)
+                logging.info(f"📋 Created backup: {backup_file}")
+                
+                # Write repaired file
+                temp_file = filename + '.repaired'
+                with open(temp_file, 'w') as f:
+                    for line in valid_lines:
+                        f.write(line + '\n')
+                
+                # Atomic move
+                shutil.move(temp_file, filename)
+                logging.info(f"✅ Repaired {filename}: kept {len(valid_lines)} valid lines")
+                
+                return True
+            else:
+                logging.debug(f"✅ {filename} is valid")
+                return True
+                
+        except Exception as e:
+            logging.error(f"❌ Error validating/repairing {filename}: {e}")
+            return False
+    
     def extract_products_from_json(self, response_data):
         products = []
         if not response_data or 'd' not in response_data:
@@ -291,8 +340,45 @@ class ApiScraper(BaseScraper):
                         continue  # skip already scraped
                     if pid and str(pid) in collected_ids:
                         continue  # skip already collected in output file
-                    with open(self.OUTPUT_FILE, 'a') as f_out:
-                        f_out.write(json.dumps(product) + '\n')
+                    
+                    # Validate and repair output file before writing (only once per page)
+                    if page_new_links == 0 and os.path.exists(self.OUTPUT_FILE):
+                        if not self._validate_and_repair_jsonl(self.OUTPUT_FILE):
+                            logging.error(f"❌ Failed to validate/repair {self.OUTPUT_FILE}")
+                            continue
+                    
+                    # Atomic write for JSONL line
+                    json_line = json.dumps(product, ensure_ascii=False, separators=(',', ':')) + '\n'
+                    temp_file = self.OUTPUT_FILE + '.tmp'
+                    
+                    try:
+                        # Write to temporary file first
+                        with open(temp_file, 'a') as f:
+                            f.write(json_line)
+                            f.flush()  # Ensure data is written to disk
+                            os.fsync(f.fileno())  # Force sync to disk
+                        
+                        # Atomic move to final location
+                        if not os.path.exists(self.OUTPUT_FILE):
+                            # If output file doesn't exist, create it with the temp content
+                            os.rename(temp_file, self.OUTPUT_FILE)
+                        else:
+                            # Append to existing file atomically
+                            with open(self.OUTPUT_FILE, 'a') as f:
+                                f.write(json_line)
+                                f.flush()
+                                os.fsync(f.fileno())
+                            # Remove temp file
+                            if os.path.exists(temp_file):
+                                os.remove(temp_file)
+                                
+                    except Exception as e:
+                        # Clean up temp file on error
+                        if os.path.exists(temp_file):
+                            os.remove(temp_file)
+                        logging.error(f"❌ Error writing product {pid}: {e}")
+                        continue
+                    
                     collected_ids.add(str(pid))
                     page_new_links += 1
                 logging.info(f"✅ Page {page_num} complete. {page_new_links} new products written. Total collected: {len(collected_ids)}/{results_total}")
@@ -452,91 +538,6 @@ def get_authenticated_session_data(driver):
 
     return requests_cookies, page_key, search_id
 
-def get_authenticated_cookies():
-    """
-    Uses Selenium to log into the website and returns the session cookies
-    and the initial pageKey.
-    """
-    logging.info("🤖 Launching Selenium to get authenticated session...")
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    
-    driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()),
-        options=options
-    )
-
-    try:
-        driver.get(PRODUCTS_URL)
-        time.sleep(3)
-
-        logging.info("🔒 Login page detected. Logging in...")
-        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "asilogin_UserName")))
-        
-        driver.find_element(By.ID, "asilogin_UserName").send_keys(USERNAME)
-        driver.find_element(By.ID, "asilogin_Password").send_keys(PASSWORD)
-        driver.find_element(By.ID, "btnLogin").click()
-
-        # NEW: Handle the "already logged in" alert
-        try:
-            logging.info("⏳ Waiting for potential login alert...")
-            WebDriverWait(driver, 10).until(EC.alert_is_present())
-            alert = driver.switch_to.alert
-            logging.warning(f"⚠️ Alert detected: {alert.text}")
-            alert.accept()
-            logging.info("✅ Alert accepted.")
-        except Exception:
-            logging.info("ℹ️ No login alert appeared, continuing.")
-        
-        # Wait for login to complete by waiting for an element on the products page
-        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, ".prod-count")))
-        
-        return get_authenticated_session_data(driver)
-
-    except Exception as e:
-        logging.error(f"❌ Selenium login failed: {e}")
-        return None, None, None
-    finally:
-        driver.quit()
-        logging.info("🤖 Selenium browser closed.")
-
-def extract_links_from_html(html_content):
-    """Parses HTML to find product links and update dates."""
-    soup = BeautifulSoup(html_content, 'html.parser')
-    products = []
-    
-    # The API returns a list of product divs
-    product_divs = soup.select('.prod-container')
-    
-    for div in product_divs:
-        link_tag = div.select_one('.prod-title a')
-        update_date_tag = div.select_one('.last-update .ng-binding')
-        
-        if link_tag and 'href' in link_tag.attrs:
-            # Construct the full URL
-            base_url = "https://espweb.asicentral.com"
-            url = link_tag['href']
-            if not url.startswith('http'):
-                url = base_url + url
-            
-            update_date = update_date_tag.text.strip() if update_date_tag else "N/A"
-            
-            products.append({
-                "URL": url,
-                "UpdateDate": update_date
-            })
-    return products
-
-def format_stats_object(stats_obj):
-    """Formats the stats dictionary into the required string format."""
-    if not isinstance(stats_obj, dict):
-        return ""
-    # The order might matter, so we should try to match the original order if possible,
-    # but for now, this is a good first step.
-    return ",".join([f"{key}={value}" for key, value in stats_obj.items()])
 
 def main():
     parser = argparse.ArgumentParser()

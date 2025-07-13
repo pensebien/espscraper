@@ -1,0 +1,288 @@
+name: API Scraper (Batch Processing)
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: 'Batch size for processing'
+        required: false
+        default: '50'
+      product_limit:
+        description: 'Product limit'
+        required: false
+        default: '4000'
+      mode:
+        description: 'Scraping mode (scrape, new, missing)'
+        required: false
+        default: 'scrape'
+      force_link_collection:
+        description: 'Force link collection'
+        required: false
+        default: 'false'
+      max_link_age:
+        description: 'Maximum link age in hours'
+        required: false
+        default: '48'
+
+permissions:
+  contents: write
+
+jobs:
+  api_scraper:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout repo
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: 🔧 Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Cache Chrome WebDriver
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/selenium
+          key: ${{ runner.os }}-selenium-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-selenium-
+
+      - name: 📦 Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Cache scraped data
+        uses: actions/cache@v4
+        with:
+          path: |
+            espscraper/data
+            batch
+            tmp
+            logs
+          key: ${{ runner.os }}-scraped-data-${{ hashFiles('**/requirements.txt') }}-${{ github.run_number }}
+          restore-keys: |
+            ${{ runner.os }}-scraped-data-${{ hashFiles('**/requirements.txt') }}-
+
+      - name: 📁 Create directories
+        run: |
+          mkdir -p espscraper/data
+          mkdir -p batch
+          mkdir -p tmp
+          mkdir -p logs
+
+      - name: 🔍 Check existing data
+        run: |
+          echo "=== Checking existing data ==="
+          
+          # Check for existing links
+          if [ -f "espscraper/data/api_scraped_links.jsonl" ]; then
+            link_count=$(wc -l < espscraper/data/api_scraped_links.jsonl)
+            echo "✅ Found product links file with $link_count lines"
+          else
+            echo "⚠️ No product links file found"
+          fi
+          
+          # Check for existing batches
+          if [ -d "batch" ] && [ "$(ls -A batch)" ]; then
+            batch_count=$(ls batch/batch_*.jsonl 2>/dev/null | wc -l)
+            echo "✅ Found $batch_count existing batch files"
+          else
+            echo "⚠️ No existing batch files found"
+          fi
+          
+          # Check for main output file
+          if [ -f "espscraper/data/final_product_details.jsonl" ]; then
+            product_count=$(wc -l < espscraper/data/final_product_details.jsonl)
+            echo "✅ Found main output file with $product_count products"
+          else
+            echo "⚠️ No main output file found"
+          fi
+
+      - name: 📥 Fetch latest files from artifacts branch
+        run: |
+          echo "=== Fetching latest files from artifacts branch ==="
+          
+          # Try to fetch the artifacts branch
+          if git ls-remote --heads origin artifacts | grep -q artifacts; then
+            echo "✅ Artifacts branch exists, fetching latest files..."
+            
+            # Fetch the artifacts branch
+            git fetch origin artifacts:artifacts || echo "Could not fetch artifacts branch"
+            
+            # Copy latest files if they exist
+            if [ -f "artifacts-branch/espscraper/data/api_scraped_links.jsonl" ]; then
+              cp artifacts-branch/espscraper/data/api_scraped_links.jsonl espscraper/data/
+              echo "✅ Updated api_scraped_links.jsonl from artifacts branch"
+            fi
+            
+            if [ -f "artifacts-branch/final_product_details.jsonl" ]; then
+              cp artifacts-branch/final_product_details.jsonl espscraper/data/
+              echo "✅ Updated final_product_details.jsonl from artifacts branch"
+            fi
+            
+            if [ -d "artifacts-branch/batch" ]; then
+              cp -r artifacts-branch/batch/* batch/ || echo "No batch files to copy"
+              echo "✅ Updated batch files from artifacts branch"
+            fi
+            
+            # Show file sizes after update
+            echo "=== File sizes after update ==="
+            ls -la espscraper/data/*.jsonl || echo "No JSONL files found"
+            ls -la batch/batch_*.jsonl 2>/dev/null || echo "No batch files found"
+            
+          else
+            echo "⚠️ Artifacts branch does not exist yet, starting fresh"
+          fi
+
+      - name: 🚀 Run API scraper with batch processing
+        run: |
+          echo "=== Starting API scraper with batch processing ==="
+          
+          # Set batch size from input or default
+          BATCH_SIZE=${BATCH_SIZE:-${{ github.event.inputs.batch_size || '50' }}
+          PRODUCT_LIMIT=${PRODUCT_LIMIT:-${{ github.event.inputs.product_limit || '4000' }}
+          MODE=${MODE:-${{ github.event.inputs.mode || 'scrape' }}
+          FORCE_LINK_COLLECTION=${FORCE_LINK_COLLECTION:-${{ github.event.inputs.force_link_collection || 'false' }}
+          MAX_LINK_AGE=${MAX_LINK_AGE:-${{ github.event.inputs.max_link_age || '48' }}
+          
+          echo "Configuration:"
+          echo "  Batch Size: $BATCH_SIZE"
+          echo "  Product Limit: $PRODUCT_LIMIT"
+          echo "  Mode: $MODE"
+          echo "  Force Link Collection: $FORCE_LINK_COLLECTION"
+          echo "  Max Link Age: $MAX_LINK_AGE hours"
+          
+          # Run the scraper
+          python3 -m espscraper.production_main \
+            --batch-size $BATCH_SIZE \
+            --product-limit $PRODUCT_LIMIT \
+            --mode $MODE \
+            --force-link-collection $FORCE_LINK_COLLECTION \
+            --max-link-age $MAX_LINK_AGE
+        env:
+          ESP_USERNAME: ${{ secrets.ESP_USERNAME }}
+          ESP_PASSWORD: ${{ secrets.ESP_PASSWORD }}
+          PRODUCTS_URL: ${{ secrets.PRODUCTS_URL }}
+          SEARCH_API_URL: ${{ secrets.SEARCH_API_URL }}
+          GOTO_PAGE_API_URL: ${{ secrets.GOTO_PAGE_API_URL }}
+          PRODUCT_API_URL: ${{ secrets.PRODUCT_API_URL }}
+          PRODUCT_URL_TEMPLATE: ${{ secrets.PRODUCT_URL_TEMPLATE }}
+
+      - name: 📊 Generate batch statistics
+        run: |
+          echo "=== Batch Statistics ==="
+          
+          if [ -d "batch" ]; then
+            python3 validate_batches.py --stats-only
+          else
+            echo "⚠️ No batch directory found"
+          fi
+          
+          # Check main output file
+          if [ -f "espscraper/data/final_product_details.jsonl" ]; then
+            main_count=$(wc -l < espscraper/data/final_product_details.jsonl)
+            echo "Main output file: $main_count products"
+          fi
+
+      - name: 🔧 Validate batch files
+        run: |
+          echo "=== Validating batch files ==="
+          
+          if [ -d "batch" ]; then
+            python3 validate_batches.py --validate-only
+          else
+            echo "⚠️ No batch directory found"
+          fi
+
+      - name: 📦 Checkout artifacts branch
+        uses: actions/checkout@v4
+        with:
+          ref: artifacts
+          path: artifacts-branch
+
+      - name: 📝 Copy files to artifacts branch
+        run: |
+          echo "=== Copying files to artifacts branch ==="
+          
+          # Create directories
+          mkdir -p artifacts-branch/espscraper/data
+          mkdir -p artifacts-branch/batch
+          
+          # Copy main output file
+          if [ -f "espscraper/data/final_product_details.jsonl" ]; then
+            cp espscraper/data/final_product_details.jsonl artifacts-branch/
+            echo "✅ Copied main output file"
+          fi
+          
+          # Copy links file
+          if [ -f "espscraper/data/api_scraped_links.jsonl" ]; then
+            cp espscraper/data/api_scraped_links.jsonl artifacts-branch/espscraper/data/
+            echo "✅ Copied links file"
+          fi
+          
+          # Copy batch files
+          if [ -d "batch" ] && [ "$(ls -A batch)" ]; then
+            cp batch/batch_*.jsonl artifacts-branch/batch/ 2>/dev/null || echo "No batch files to copy"
+            echo "✅ Copied batch files"
+          fi
+          
+          # Copy any other JSONL files
+          if ls espscraper/data/*.jsonl 1> /dev/null 2>&1; then
+            cp espscraper/data/*.jsonl artifacts-branch/espscraper/data/
+            echo "✅ Copied additional data files"
+          fi
+
+      - name: 🚀 Commit and push to artifacts branch
+        run: |
+          cd artifacts-branch
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Check if there are any files to commit
+          if [ -n "$(git status --porcelain)" ]; then
+            git add .
+            git commit -m "Add scraped data and batch files from API scraper run $(date)" || echo "No changes to commit"
+            git push origin artifacts
+            echo "✅ Pushed files to artifacts branch"
+          else
+            echo "⚠️ No files to commit"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📋 Final summary
+        run: |
+          echo "=== API Scraper Run Summary ==="
+          echo "✅ Scraping completed successfully"
+          
+          # Show final file counts
+          if [ -f "espscraper/data/final_product_details.jsonl" ]; then
+            product_count=$(wc -l < espscraper/data/final_product_details.jsonl)
+            echo "📊 Total products scraped: $product_count"
+          fi
+          
+          if [ -d "batch" ]; then
+            batch_count=$(ls batch/batch_*.jsonl 2>/dev/null | wc -l)
+            echo "📦 Batch files created: $batch_count"
+          fi
+          
+          echo "🎯 Ready for import process" 
