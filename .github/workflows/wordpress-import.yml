@@ -96,14 +96,42 @@ jobs:
         env:
           WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
 
+      - name: Debug API URL and Key
+        run: |
+          echo "=== Debug: API URL and Key ==="
+          echo "WP_API_URL: '$WP_API_URL'"
+          echo "WP_API_KEY: '$WP_API_KEY'"
+          echo "WP_BASE_URL: '$WP_BASE_URL'"
+          echo "WP_BASIC_AUTH_USER: '$WP_BASIC_AUTH_USER'"
+          echo "Params file content:"
+          cat params.json || echo "No params.json file found"
+          echo "=== End Debug ==="
+        env:
+          WP_API_URL: ${{ env.WP_API_URL }}
+          WP_API_KEY: ${{ env.WP_API_KEY }}
+          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
+          WP_BASIC_AUTH_USER: ${{ secrets.WP_BASIC_AUTH_USER }}
+
       - name: 🚀 Run WordPress Import
         run: |
+          echo "=== Starting WordPress Import ==="
+          echo "Mode: ${{ github.event.inputs.mode || 'sync' }}"
+          echo "Product Limit: ${{ github.event.inputs.product_limit || '100' }}"
+          echo "API URL: $WP_API_URL"
+          echo "API Key: ${WP_API_KEY:0:10}..." # Show first 10 chars of API key
+          echo "Basic Auth User: $WP_BASIC_AUTH_USER"
+          echo "=== Running Import Script ==="
+          
           python3 import_to_wordpress.py \
             --mode ${{ github.event.inputs.mode || 'sync' }} \
-            --product-limit ${{ github.event.inputs.product_limit || '100' }}
+            --product-limit ${{ github.event.inputs.product_limit || '100' }} \
+            --wp-api-url "$WP_API_URL" \
+            --wp-api-key "$WP_API_KEY" \
+            --wp-basic-auth-user "$WP_BASIC_AUTH_USER" \
+            --wp-basic-auth-pass "$WP_BASIC_AUTH_PASS"
         env:
-          WP_API_URL: ${{ github.event.inputs.wp_api_url || env.WP_API_URL }}
-          WP_API_KEY: ${{ github.event.inputs.wp_api_key || env.WP_API_KEY }}
+          WP_API_URL: ${{ env.WP_API_URL }}
+          WP_API_KEY: ${{ env.WP_API_KEY }}
           WP_BASIC_AUTH_USER: ${{ secrets.WP_BASIC_AUTH_USER }}
           WP_BASIC_AUTH_PASS: ${{ secrets.WP_BASIC_AUTH_PASS }}
           WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
