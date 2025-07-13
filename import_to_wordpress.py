@@ -212,6 +212,10 @@ def main():
                 if not line:
                     continue
                     
+                # Additional check for whitespace-only lines
+                if not line or line.isspace():
+                    continue
+                    
                 try:
                     product = json.loads(line)
                     product_id = str(
@@ -273,6 +277,11 @@ def main():
                     if current_imported % 5 == 0 or not success:
                         update_heartbeat("running", current_imported, current_errors, total, current_product_info, args.mode)
                         
+                except json.JSONDecodeError as e:
+                    current_errors += 1
+                    print(f"❌ JSON parsing error on line {line_num} in {batch_file}: {e}")
+                    print(f"   Line content (first 100 chars): {repr(line[:100])}")
+                    update_heartbeat("running", current_imported, current_errors, total, f"JSON Error: {str(e)}", args.mode)
                 except Exception as e:
                     current_errors += 1
                     print(f"❌ Error processing line {line_num} in {batch_file}: {e}")
