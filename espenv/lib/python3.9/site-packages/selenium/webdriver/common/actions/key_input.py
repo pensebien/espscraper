@@ -26,7 +26,11 @@ class KeyInput(InputDevice):
         self.type = interaction.KEY
 
     def encode(self) -> dict:
-        return {"type": self.type, "id": self.name, "actions": [acts.encode() for acts in self.actions]}
+        return {
+            "type": self.type,
+            "id": self.name,
+            "actions": [acts.encode() for acts in self.actions],
+        }
 
     def create_key_down(self, key) -> None:
         self.add_action(TypingInteraction(self, "keyDown", key))

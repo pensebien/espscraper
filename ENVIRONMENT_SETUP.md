@@ -243,9 +243,9 @@ python3 -m espscraper.production_main \
 
 ## Summary
 
-✅ **Your API URL format is perfect**: `https://api.asicentral.com/v1/products/{product_id}.json`  
-✅ **Set as GitHub secret**: `PRODUCT_API_URL`  
-✅ **Works with template replacement**: `{product_id}` gets replaced  
-✅ **Supports both local and GitHub Actions**: Environment variables work everywhere  
+✅ **Your API URL format is perfect**: `https://api.asicentral.com/v1/products/{product_id}.json`
+✅ **Set as GitHub secret**: `PRODUCT_API_URL`
+✅ **Works with template replacement**: `{product_id}` gets replaced
+✅ **Supports both local and GitHub Actions**: Environment variables work everywhere
 
-The system will automatically replace `{product_id}` with actual product IDs when making API calls! 🚀 
+The system will automatically replace `{product_id}` with actual product IDs when making API calls! 🚀

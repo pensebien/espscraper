@@ -46,7 +46,9 @@ class ActionBuilder:
         self._wheel_action = WheelActions(wheel)
         self.driver = driver
 
-    def get_device_with(self, name: str) -> Optional[Union["WheelInput", "PointerInput", "KeyInput"]]:
+    def get_device_with(
+        self, name: str
+    ) -> Optional[Union["WheelInput", "PointerInput", "KeyInput"]]:
         """Get the device with the given name.
 
         Parameters:

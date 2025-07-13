@@ -67,7 +67,12 @@ class ActionChains:
     another.
     """
 
-    def __init__(self, driver: WebDriver, duration: int = 250, devices: list[AnyDevice] | None = None) -> None:
+    def __init__(
+        self,
+        driver: WebDriver,
+        duration: int = 250,
+        devices: list[AnyDevice] | None = None,
+    ) -> None:
         """Creates a new ActionChains.
 
         :Args:
@@ -86,7 +91,9 @@ class ActionChains:
                     keyboard = device
                 if isinstance(device, WheelInput):
                     wheel = device
-        self.w3c_actions = ActionBuilder(driver, mouse=mouse, keyboard=keyboard, wheel=wheel, duration=duration)
+        self.w3c_actions = ActionBuilder(
+            driver, mouse=mouse, keyboard=keyboard, wheel=wheel, duration=duration
+        )
 
     def perform(self) -> None:
         """Performs all stored actions."""
@@ -174,7 +181,9 @@ class ActionChains:
         self.release(target)
         return self
 
-    def drag_and_drop_by_offset(self, source: WebElement, xoffset: int, yoffset: int) -> ActionChains:
+    def drag_and_drop_by_offset(
+        self, source: WebElement, xoffset: int, yoffset: int
+    ) -> ActionChains:
         """Holds down the left mouse button on the source element, then moves
         to the target offset and releases the mouse button.
 
@@ -254,7 +263,9 @@ class ActionChains:
 
         return self
 
-    def move_to_element_with_offset(self, to_element: WebElement, xoffset: int, yoffset: int) -> ActionChains:
+    def move_to_element_with_offset(
+        self, to_element: WebElement, xoffset: int, yoffset: int
+    ) -> ActionChains:
         """Move the mouse by an offset of the specified element. Offsets are
         relative to the in-view center point of the element.
 
@@ -307,7 +318,9 @@ class ActionChains:
 
         return self
 
-    def send_keys_to_element(self, element: WebElement, *keys_to_send: str) -> ActionChains:
+    def send_keys_to_element(
+        self, element: WebElement, *keys_to_send: str
+    ) -> ActionChains:
         """Sends keys to an element.
 
         :Args:
@@ -342,7 +355,9 @@ class ActionChains:
         self.w3c_actions.wheel_action.scroll(delta_x=delta_x, delta_y=delta_y)
         return self
 
-    def scroll_from_origin(self, scroll_origin: ScrollOrigin, delta_x: int, delta_y: int) -> ActionChains:
+    def scroll_from_origin(
+        self, scroll_origin: ScrollOrigin, delta_x: int, delta_y: int
+    ) -> ActionChains:
         """Scrolls by provided amount based on a provided origin. The scroll
         origin is either the center of an element or the upper left of the
         viewport plus any offsets. If the origin is an element, and the element
@@ -359,7 +374,9 @@ class ActionChains:
         """
 
         if not isinstance(scroll_origin, ScrollOrigin):
-            raise TypeError(f"Expected object of type ScrollOrigin, got: {type(scroll_origin)}")
+            raise TypeError(
+                f"Expected object of type ScrollOrigin, got: {type(scroll_origin)}"
+            )
 
         self.w3c_actions.wheel_action.scroll(
             origin=scroll_origin.origin,

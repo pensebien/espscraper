@@ -97,4 +97,13 @@ class By:
         cls._custom_finders.clear()
 
 
-ByType = Literal["id", "xpath", "link text", "partial link text", "name", "tag name", "class name", "css selector"]
+ByType = Literal[
+    "id",
+    "xpath",
+    "link text",
+    "partial link text",
+    "name",
+    "tag name",
+    "class name",
+    "css selector",
+]

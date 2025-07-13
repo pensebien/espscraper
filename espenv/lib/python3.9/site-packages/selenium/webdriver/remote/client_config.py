@@ -105,7 +105,11 @@ class ClientConfig:
         self.extra_headers = extra_headers
 
         self.ca_certs = (
-            (os.getenv("REQUESTS_CA_BUNDLE") if "REQUESTS_CA_BUNDLE" in os.environ else certifi.where())
+            (
+                os.getenv("REQUESTS_CA_BUNDLE")
+                if "REQUESTS_CA_BUNDLE" in os.environ
+                else certifi.where()
+            )
             if ca_certs is None
             else ca_certs
         )
@@ -132,18 +136,32 @@ class ClientConfig:
                     if n_url.path in remote_add.netloc:
                         return None
             return os.environ.get(
-                "https_proxy" if self.remote_server_addr.startswith("https://") else "http_proxy",
-                os.environ.get("HTTPS_PROXY" if self.remote_server_addr.startswith("https://") else "HTTP_PROXY"),
+                (
+                    "https_proxy"
+                    if self.remote_server_addr.startswith("https://")
+                    else "http_proxy"
+                ),
+                os.environ.get(
+                    "HTTPS_PROXY"
+                    if self.remote_server_addr.startswith("https://")
+                    else "HTTP_PROXY"
+                ),
             )
         if proxy_type is ProxyType.MANUAL:
-            return self.proxy.sslProxy if self.remote_server_addr.startswith("https://") else self.proxy.http_proxy
+            return (
+                self.proxy.sslProxy
+                if self.remote_server_addr.startswith("https://")
+                else self.proxy.http_proxy
+            )
         return None
 
     def get_auth_header(self) -> Optional[dict]:
         """Returns the authorization to add to the request headers."""
         if self.auth_type is AuthType.BASIC and self.username and self.password:
             credentials = f"{self.username}:{self.password}"
-            encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
+            encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode(
+                "utf-8"
+            )
             return {"Authorization": f"{AuthType.BASIC.value} {encoded_credentials}"}
         if self.auth_type is AuthType.BEARER and self.token:
             return {"Authorization": f"{AuthType.BEARER.value} {self.token}"}

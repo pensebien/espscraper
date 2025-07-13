@@ -266,4 +266,4 @@ MIT License - see LICENSE file for details.
 For issues and questions:
 1. Check the troubleshooting section
 2. Review the logs in `log/` directory
-3. Open an issue with detailed error information 
+3. Open an issue with detailed error information

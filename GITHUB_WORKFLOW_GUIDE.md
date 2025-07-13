@@ -138,7 +138,7 @@ The workflow processes inputs in the "Run API scraper" step:
     MODE=${MODE:-${{ github.event.inputs.mode || 'scrape' }}
     FORCE_LINK_COLLECTION=${FORCE_LINK_COLLECTION:-${{ github.event.inputs.force_link_collection || 'false' }}
     MAX_LINK_AGE=${MAX_LINK_AGE:-${{ github.event.inputs.max_link_age || '48' }}
-    
+
     # Run the scraper
     python3 -m espscraper.production_main \
       --batch-size $BATCH_SIZE \
@@ -376,11 +376,11 @@ gh workflow run api-scraper.yml \
 
 The GitHub Actions workflow provides:
 
-✅ **Flexible Input System**: Customizable parameters for different scenarios  
-✅ **Manual Triggering**: Run when needed with custom settings  
-✅ **Input Validation**: Proper defaults and error handling  
-✅ **Security**: Secrets management for credentials  
-✅ **Monitoring**: Real-time logs and progress tracking  
-✅ **Artifact Management**: Automatic file storage and sharing  
+✅ **Flexible Input System**: Customizable parameters for different scenarios
+✅ **Manual Triggering**: Run when needed with custom settings
+✅ **Input Validation**: Proper defaults and error handling
+✅ **Security**: Secrets management for credentials
+✅ **Monitoring**: Real-time logs and progress tracking
+✅ **Artifact Management**: Automatic file storage and sharing
 
-The workflow can be triggered manually with custom parameters to handle different scraping scenarios efficiently! 🚀 
+The workflow can be triggered manually with custom parameters to handle different scraping scenarios efficiently! 🚀

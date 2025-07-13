@@ -114,7 +114,9 @@ class _PageOrientationDescriptor:
 
     def __set__(self, obj, value) -> None:
         if value not in self.ORIENTATION_VALUES:
-            raise ValueError(f"Orientation value must be one of {self.ORIENTATION_VALUES}")
+            raise ValueError(
+                f"Orientation value must be one of {self.ORIENTATION_VALUES}"
+            )
         obj._print_options[self.name] = value
 
 
@@ -130,7 +132,9 @@ class _ValidateTypeDescriptor:
 
     def __set__(self, obj, value) -> None:
         if not isinstance(value, self.expected_type):
-            raise ValueError(f"{self.name} should be of type {self.expected_type.__name__}")
+            raise ValueError(
+                f"{self.name} should be of type {self.expected_type.__name__}"
+            )
         obj._print_options[self.name] = value
 
 

@@ -210,6 +210,8 @@ jobs:
           GOTO_PAGE_API_URL: ${{ secrets.GOTO_PAGE_API_URL }}
           PRODUCT_API_URL: ${{ secrets.PRODUCT_API_URL }}
           PRODUCT_URL_TEMPLATE: ${{ secrets.PRODUCT_URL_TEMPLATE }}
+          API_SCRAPED_LINKS_FILE: espscraper/data/api_scraped_links.jsonl
+          PRODUCT_OUTPUT_FILE: espscraper/data/final_product_details.jsonl
 
       - name: 📊 Generate batch statistics
         run: |

@@ -116,35 +116,35 @@ jobs:
       - name: 📥 Fetch latest files from artifacts branch
         run: |
           echo "=== Fetching latest files from artifacts branch ==="
-          
+
           # Try to fetch the artifacts branch
           if git ls-remote --heads origin artifacts | grep -q artifacts; then
             echo "✅ Artifacts branch exists, fetching latest files..."
-            
+
             # Fetch the artifacts branch
             git fetch origin artifacts:artifacts || echo "Could not fetch artifacts branch"
-            
+
             # Copy latest files if they exist
             if [ -f "artifacts-branch/espscraper/data/api_scraped_links.jsonl" ]; then
               cp artifacts-branch/espscraper/data/api_scraped_links.jsonl espscraper/data/
               echo "✅ Updated api_scraped_links.jsonl from artifacts branch"
             fi
-            
+
             if [ -f "artifacts-branch/final_product_details.jsonl" ]; then
               cp artifacts-branch/final_product_details.jsonl espscraper/data/
               echo "✅ Updated final_product_details.jsonl from artifacts branch"
             fi
-            
+
             if [ -d "artifacts-branch/batches" ]; then
               cp -r artifacts-branch/batches/* . || echo "No batch files to copy"
               echo "✅ Updated batch files from artifacts branch"
             fi
-            
+
             # Show file sizes after update
             echo "=== File sizes after update ==="
             ls -la espscraper/data/*.jsonl || echo "No JSONL files found"
             ls -la batch_*.jsonl 2>/dev/null || echo "No batch files found"
-            
+
           else
             echo "⚠️ Artifacts branch does not exist yet, starting fresh"
           fi
@@ -153,7 +153,7 @@ jobs:
         run: |
           echo "=== Creating/Updating product index ==="
           python3 create_index.py
-          
+
           # Show index stats
           if [ -f "espscraper/data/product_index.json" ]; then
             echo "=== Product index stats ==="
@@ -170,7 +170,7 @@ jobs:
           echo "WordPress integration status: $(jq -r .api_url params.json | grep -q '^$' && echo 'Not configured' || echo 'Configured')"
         env:
           WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
-# Added the neccessary weblink using LocalWP livelink 
+# Added the neccessary weblink using LocalWP livelink
       - name: 🚀 Run ESP scraper (streaming upload + batch save)
         run: |
           python3 -m espscraper.production_main \
@@ -220,9 +220,9 @@ jobs:
           find . -name "batch_*.jsonl" -type f || echo "No batch files found"
           echo "=== Looking for any JSONL files ==="
           find . -name "*.jsonl" -type f || echo "No JSONL files found"
-          
+
           mkdir -p artifacts-branch/batches
-          
+
           # Copy batch files if they exist
           if ls batch_*.jsonl 1> /dev/null 2>&1; then
             cp batch_*.jsonl artifacts-branch/batches/
@@ -230,7 +230,7 @@ jobs:
           else
             echo "⚠️ No batch files found to copy"
           fi
-          
+
           # Also copy any JSONL files from data directory
           if ls espscraper/data/*.jsonl 1> /dev/null 2>&1; then
             cp espscraper/data/*.jsonl artifacts-branch/batches/
@@ -238,7 +238,7 @@ jobs:
           else
             echo "⚠️ No JSONL files found in data directory"
           fi
-          
+
           # Copy the main output file if it exists
           if [ -f "espscraper/data/final_product_details.jsonl" ]; then
             cp espscraper/data/final_product_details.jsonl artifacts-branch/
@@ -249,7 +249,7 @@ jobs:
           else
             echo "⚠️ No main output file found"
           fi
-          
+
           # Copy the product index file if it exists
           if [ -f "espscraper/data/product_index.json" ]; then
             cp espscraper/data/product_index.json artifacts-branch/
@@ -263,7 +263,7 @@ jobs:
           cd artifacts-branch
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           # Check if there are any files to commit
           if [ -n "$(ls -A batches/ 2>/dev/null)" ] || [ -f "final_product_details.jsonl" ] || [ -f "product_index.json" ]; then
             git add batches/

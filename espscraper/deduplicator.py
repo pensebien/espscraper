@@ -27,6 +27,7 @@ duplicate_ids = set()
 # Preferred key order for api_scraped_links
 PREFERRED_KEYS = ["url", "id", "name"]
 
+
 def get_id(data):
     # Try all common id fields
     for key in ("id", "productId", "ProductID"):
@@ -42,6 +43,7 @@ def get_id(data):
         return str(data["URL"])
     return None
 
+
 def reorder_keys(d):
     # Only reorder for api_scraped_links
     if all(k in d for k in ("url", "id", "name")):
@@ -54,6 +56,7 @@ def reorder_keys(d):
                 ordered[k] = d[k]
         return ordered
     return d
+
 
 with open(input_file, "r", encoding="utf-8") as f:
     for line in f:
@@ -76,7 +79,9 @@ with open(output_file, "w", encoding="utf-8") as f:
         ordered_item = reorder_keys(item)
         f.write(json.dumps(ordered_item, ensure_ascii=False) + "\n")
 
-print(f"Deduplication complete. {len(unique_items)} unique items written to {output_file}.")
+print(
+    f"Deduplication complete. {len(unique_items)} unique items written to {output_file}."
+)
 print(f"Removed {duplicate_count} duplicate entries.")
 if duplicate_ids:
     print(f"Duplicate IDs found ({len(duplicate_ids)}):")

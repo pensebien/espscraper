@@ -84,18 +84,29 @@ class SeleniumManager:
                 ("openbsd", "x86_64"): "linux/selenium-manager",
             }
 
-            arch = platform.machine() if sys.platform in ("linux", "freebsd", "openbsd") else "any"
+            arch = (
+                platform.machine()
+                if sys.platform in ("linux", "freebsd", "openbsd")
+                else "any"
+            )
             if sys.platform in ["freebsd", "openbsd"]:
-                logger.warning("Selenium Manager binary may not be compatible with %s; verify settings", sys.platform)
+                logger.warning(
+                    "Selenium Manager binary may not be compatible with %s; verify settings",
+                    sys.platform,
+                )
 
             location = allowed.get((sys.platform, arch))
             if location is None:
-                raise WebDriverException(f"Unsupported platform/architecture combination: {sys.platform}/{arch}")
+                raise WebDriverException(
+                    f"Unsupported platform/architecture combination: {sys.platform}/{arch}"
+                )
 
             path = Path(__file__).parent.joinpath(location)
 
         if path is None or not path.is_file():
-            raise WebDriverException(f"Unable to obtain working Selenium Manager binary; {path}")
+            raise WebDriverException(
+                f"Unable to obtain working Selenium Manager binary; {path}"
+            )
 
         logger.debug("Selenium Manager binary found at: %s", path)
 
@@ -113,14 +124,18 @@ class SeleniumManager:
         logger.debug("Executing process: %s", command)
         try:
             if sys.platform == "win32":
-                completed_proc = subprocess.run(args, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                completed_proc = subprocess.run(
+                    args, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW
+                )
             else:
                 completed_proc = subprocess.run(args, capture_output=True)
             stdout = completed_proc.stdout.decode("utf-8").rstrip("\n")
             stderr = completed_proc.stderr.decode("utf-8").rstrip("\n")
             output = json.loads(stdout) if stdout != "" else {"logs": [], "result": {}}
         except Exception as err:
-            raise WebDriverException(f"Unsuccessful command executed: {command}") from err
+            raise WebDriverException(
+                f"Unsuccessful command executed: {command}"
+            ) from err
 
         SeleniumManager._process_logs(output["logs"])
         result = output["result"]

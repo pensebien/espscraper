@@ -95,7 +95,9 @@ class FirefoxBinary:
         if self.command_line:
             for cli in self.command_line:
                 command.append(cli)
-        self.process = Popen(command, stdout=self._log_file, stderr=STDOUT, env=self._firefox_env)
+        self.process = Popen(
+            command, stdout=self._log_file, stderr=STDOUT, env=self._firefox_env
+        )
 
     def _wait_until_connectable(self, timeout=30):
         """Blocks until the extension is connectable in the firefox."""
@@ -122,9 +124,19 @@ class FirefoxBinary:
 
     def _find_exe_in_registry(self):
         try:
-            from _winreg import HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, OpenKey, QueryValue
+            from _winreg import (
+                HKEY_CURRENT_USER,
+                HKEY_LOCAL_MACHINE,
+                OpenKey,
+                QueryValue,
+            )
         except ImportError:
-            from winreg import HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, OpenKey, QueryValue
+            from winreg import (
+                HKEY_CURRENT_USER,
+                HKEY_LOCAL_MACHINE,
+                OpenKey,
+                QueryValue,
+            )
         import shlex
 
         keys = (
@@ -211,7 +223,12 @@ class FirefoxBinary:
                 os.makedirs(library_path)
             import shutil
 
-            shutil.copy(os.path.join(os.path.dirname(__file__), path, self.NO_FOCUS_LIBRARY_NAME), library_path)
+            shutil.copy(
+                os.path.join(
+                    os.path.dirname(__file__), path, self.NO_FOCUS_LIBRARY_NAME
+                ),
+                library_path,
+            )
             built_path += library_path + ":"
 
         return built_path

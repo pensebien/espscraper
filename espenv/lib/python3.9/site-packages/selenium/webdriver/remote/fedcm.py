@@ -50,7 +50,10 @@ class FedCM:
 
     def accept(self) -> None:
         """Clicks the continue button in the dialog."""
-        self._driver.execute(Command.CLICK_FEDCM_DIALOG_BUTTON, {"dialogButton": "ConfirmIdpLoginContinue"})
+        self._driver.execute(
+            Command.CLICK_FEDCM_DIALOG_BUTTON,
+            {"dialogButton": "ConfirmIdpLoginContinue"},
+        )
 
     def dismiss(self) -> None:
         """Cancels/dismisses the FedCM dialog."""

@@ -17,7 +17,11 @@
 
 from typing import Optional, Union
 
-from selenium.common.exceptions import NoSuchElementException, NoSuchFrameException, NoSuchWindowException
+from selenium.common.exceptions import (
+    NoSuchElementException,
+    NoSuchFrameException,
+    NoSuchWindowException,
+)
 from selenium.webdriver.common.alert import Alert
 from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webelement import WebElement
@@ -85,7 +89,9 @@ class SwitchTo:
                 frame_reference = self._driver.find_element(By.ID, frame_reference)
             except NoSuchElementException:
                 try:
-                    frame_reference = self._driver.find_element(By.NAME, frame_reference)
+                    frame_reference = self._driver.find_element(
+                        By.NAME, frame_reference
+                    )
                 except NoSuchElementException as exc:
                     raise NoSuchFrameException(frame_reference) from exc
 

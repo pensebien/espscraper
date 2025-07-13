@@ -57,7 +57,9 @@ class FirefoxProfile:
         if profile_directory:
             newprof = os.path.join(tempfile.mkdtemp(), "webdriver-py-profilecopy")
             shutil.copytree(
-                profile_directory, newprof, ignore=shutil.ignore_patterns("parent.lock", "lock", ".parentlock")
+                profile_directory,
+                newprof,
+                ignore=shutil.ignore_patterns("parent.lock", "lock", ".parentlock"),
             )
             self._profile_dir = newprof
             os.chmod(self._profile_dir, 0o755)
@@ -65,11 +67,14 @@ class FirefoxProfile:
             self._profile_dir = tempfile.mkdtemp()
             if not FirefoxProfile.DEFAULT_PREFERENCES:
                 with open(
-                    os.path.join(os.path.dirname(__file__), WEBDRIVER_PREFERENCES), encoding="utf-8"
+                    os.path.join(os.path.dirname(__file__), WEBDRIVER_PREFERENCES),
+                    encoding="utf-8",
                 ) as default_prefs:
                     FirefoxProfile.DEFAULT_PREFERENCES = json.load(default_prefs)
 
-            self._desired_preferences = copy.deepcopy(FirefoxProfile.DEFAULT_PREFERENCES["mutable"])
+            self._desired_preferences = copy.deepcopy(
+                FirefoxProfile.DEFAULT_PREFERENCES["mutable"]
+            )
             for key, value in FirefoxProfile.DEFAULT_PREFERENCES["frozen"].items():
                 self._desired_preferences[key] = value
 
@@ -152,7 +157,9 @@ class FirefoxProfile:
         if self._desired_preferences:
             self.update_preferences()
         fp = BytesIO()
-        with zipfile.ZipFile(fp, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as zipped:
+        with zipfile.ZipFile(
+            fp, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False
+        ) as zipped:
             path_root = len(self.path) + 1  # account for trailing slash
             for base, _, files in os.walk(self.path):
                 for fyle in files:
@@ -168,7 +175,9 @@ class FirefoxProfile:
             for usr in f:
                 matches = pref_pattern.search(usr)
                 try:
-                    self._desired_preferences[matches.group(1)] = json.loads(matches.group(2))
+                    self._desired_preferences[matches.group(1)] = json.loads(
+                        matches.group(2)
+                    )
                 except Exception:
                     warnings.warn(
                         f"(skipping) failed to json.loads existing preference: {matches.group(1) + matches.group(2)}"
@@ -280,7 +289,9 @@ class FirefoxProfile:
             if zipfile.is_zipfile(addon_path):
                 with zipfile.ZipFile(addon_path, "r") as compressed_file:
                     if "manifest.json" in compressed_file.namelist():
-                        return parse_manifest_json(compressed_file.read("manifest.json"))
+                        return parse_manifest_json(
+                            compressed_file.read("manifest.json")
+                        )
 
                     manifest = compressed_file.read("install.rdf")
             elif os.path.isdir(addon_path):
@@ -289,10 +300,14 @@ class FirefoxProfile:
                     with open(manifest_json_filename, encoding="utf-8") as f:
                         return parse_manifest_json(f.read())
 
-                with open(os.path.join(addon_path, "install.rdf"), encoding="utf-8") as f:
+                with open(
+                    os.path.join(addon_path, "install.rdf"), encoding="utf-8"
+                ) as f:
                     manifest = f.read()
             else:
-                raise OSError(f"Add-on path is neither an XPI nor a directory: {addon_path}")
+                raise OSError(
+                    f"Add-on path is neither an XPI nor a directory: {addon_path}"
+                )
         except (OSError, KeyError) as e:
             raise AddonFormatError(str(e), sys.exc_info()[2])
 

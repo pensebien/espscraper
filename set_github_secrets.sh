@@ -19,4 +19,4 @@ gh secret set PRODUCT_API_URL --body "https://api.asicentral.com/v1/products/{pr
 gh secret set PRODUCT_URL_TEMPLATE --body "https://espweb.asicentral.com/Default.aspx?appCode=WESP&appVersion=4.1.0&page=ProductDetails&referrerPage=ProductResults&referrerModule=PRDRES&refModSufx=Generic&PCUrl=1&productID={product_id}&autoLaunchVS=0&tab=list"
 
 echo "✅ All GitHub secrets have been set!"
-echo "⚠️  Remember to replace 'your_esp_username' and 'your_esp_password' with your actual credentials" 
+echo "⚠️  Remember to replace 'your_esp_username' and 'your_esp_password' with your actual credentials"

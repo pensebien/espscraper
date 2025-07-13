@@ -176,7 +176,9 @@ class PointerActions(Interaction):
     def context_click(self, element: Optional[WebElement] = None):
         return self.click(element=element, button=MouseButton.RIGHT)
 
-    def click_and_hold(self, element: Optional[WebElement] = None, button=MouseButton.LEFT):
+    def click_and_hold(
+        self, element: Optional[WebElement] = None, button=MouseButton.LEFT
+    ):
         if element:
             self.move_to(element)
         self.pointer_down(button=button)

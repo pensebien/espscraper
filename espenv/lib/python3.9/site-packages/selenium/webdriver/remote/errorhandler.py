@@ -185,7 +185,9 @@ class ErrorHandler:
         for error_code in error_codes:
             error_info = getattr(ErrorCode, error_code)
             if isinstance(error_info, list) and status in error_info:
-                exception_class = getattr(ExceptionMapping, error_code, WebDriverException)
+                exception_class = getattr(
+                    ExceptionMapping, error_code, WebDriverException
+                )
                 break
         else:
             exception_class = WebDriverException

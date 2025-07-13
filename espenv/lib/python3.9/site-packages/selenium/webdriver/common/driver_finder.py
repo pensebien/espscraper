@@ -58,7 +58,9 @@ class DriverFinder:
             path = self._service.path
             if path:
                 logger.debug(
-                    "Skipping Selenium Manager; path to %s driver specified in Service class: %s", browser, path
+                    "Skipping Selenium Manager; path to %s driver specified in Service class: %s",
+                    browser,
+                    path,
                 )
                 if not Path(path).is_file():
                     raise ValueError(f"The path is not a valid file: {path}")
@@ -68,11 +70,15 @@ class DriverFinder:
                 if Path(output["driver_path"]).is_file():
                     self._paths["driver_path"] = output["driver_path"]
                 else:
-                    raise ValueError(f"The driver path is not a valid file: {output['driver_path']}")
+                    raise ValueError(
+                        f"The driver path is not a valid file: {output['driver_path']}"
+                    )
                 if Path(output["browser_path"]).is_file():
                     self._paths["browser_path"] = output["browser_path"]
                 else:
-                    raise ValueError(f"The browser path is not a valid file: {output['browser_path']}")
+                    raise ValueError(
+                        f"The browser path is not a valid file: {output['browser_path']}"
+                    )
         except Exception as err:
             msg = f"Unable to obtain driver for {browser}"
             raise NoSuchDriverException(msg) from err

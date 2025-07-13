@@ -152,7 +152,7 @@ espscraper-project-vscode/
    ```bash
    # Resume missing products
    python3 espscraper/production_main.py --mode missing --resume-missing
-   
+
    # Resume from interruption (automatic)
    python3 espscraper/production_main.py --mode scrape
    ```
@@ -161,7 +161,7 @@ espscraper-project-vscode/
    ```bash
    # Continue with existing links if link collection fails (default behavior)
    python3 espscraper/production_main.py --batch-size 20 --max-retries 3
-   
+
    # Fail entire scraper if link collection fails
    python3 espscraper/production_main.py --fail-on-link-collection
    ```
@@ -235,12 +235,12 @@ python3 repair_jsonl.py espscraper/data/final_product_details.jsonl --no-backup
 - Never commit environment variables to version control
 - Keep `tmp/` directory secure
 - Review logs for sensitive information
-- Respect ESP's rate limits to avoid IP blocking 
+- Respect ESP's rate limits to avoid IP blocking
 
 
 
 
-Check the plugin @plugin-scraper.yml file for how we buildthe former github flow. But it this case we want to divide the flow. 
+Check the plugin @plugin-scraper.yml file for how we buildthe former github flow. But it this case we want to divide the flow.
 
 Use a different file. Api_scraper.yml that does the scraping
 

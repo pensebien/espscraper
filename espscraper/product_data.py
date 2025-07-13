@@ -2,7 +2,8 @@
 """
 Product Data Models for ESP Scraper
 
-This module contains the data structures used for product information
+This module contains the data structures used for
+product information
 to avoid circular imports between modules.
 """
 
@@ -13,8 +14,9 @@ from typing import Dict, List, Optional
 @dataclass
 class ProductData:
     """Structured product data from API"""
+
     product_id: str
-    
+
     name: str
     sku: str
     description: str
@@ -40,4 +42,4 @@ class ProductData:
     # Use snake_case for new fields
     product_number: str = ""
     vendor_product_url: str = ""
-    product_art_url: str = "" 
+    product_art_url: str = ""

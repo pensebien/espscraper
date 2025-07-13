@@ -1,6 +1,8 @@
 import os
+
 # Don't load .env file in production - use environment variables directly
 # from dotenv import load_dotenv
+
 
 class BaseScraper:
     def __init__(self, session_manager=None):
@@ -19,4 +21,4 @@ class BaseScraper:
     def load_env(self):
         # load_dotenv()  # Don't load .env in production
         # Optionally, load more config here
-        pass 
+        pass

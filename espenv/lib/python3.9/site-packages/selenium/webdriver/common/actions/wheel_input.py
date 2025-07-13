@@ -23,7 +23,9 @@ from .input_device import InputDevice
 
 
 class ScrollOrigin:
-    def __init__(self, origin: Union[str, WebElement], x_offset: int, y_offset: int) -> None:
+    def __init__(
+        self, origin: Union[str, WebElement], x_offset: int, y_offset: int
+    ) -> None:
         self._origin = origin
         self._x_offset = x_offset
         self._y_offset = y_offset
@@ -58,7 +60,9 @@ class WheelInput(InputDevice):
     def encode(self) -> dict:
         return {"type": self.type, "id": self.name, "actions": self.actions}
 
-    def create_scroll(self, x: int, y: int, delta_x: int, delta_y: int, duration: int, origin) -> None:
+    def create_scroll(
+        self, x: int, y: int, delta_x: int, delta_y: int, duration: int, origin
+    ) -> None:
         if isinstance(origin, WebElement):
             origin = {"element-6066-11e4-a52e-4f735466cecf": origin.id}
         self.add_action(
