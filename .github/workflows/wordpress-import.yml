@@ -71,8 +71,8 @@ jobs:
               echo "✅ Updated final_product_details.jsonl from artifacts branch"
             fi
 
-            if [ -d "artifacts-branch/batches" ]; then
-              cp -r artifacts-branch/batches/* . || echo "No batch files to copy"
+            if [ -d "artifacts-branch/batch" ]; then
+              cp -r artifacts-branch/batch/* . || echo "No batch files to copy"
               echo "✅ Updated batch files from artifacts branch"
             fi
 
