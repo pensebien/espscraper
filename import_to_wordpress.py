@@ -60,10 +60,12 @@ def fetch_existing_products(
     wp_api_url, wp_api_key, basic_auth_user=None, basic_auth_pass=None
 ):
     """Fetch existing products from WordPress for sync mode."""
-    if wp_api_url.endswith("/upload"):
-        existing_url = wp_api_url.replace("/upload", "/existing-products")
-    else:
-        existing_url = wp_api_url.rstrip("/") + "/existing-products"
+    # Validate URL
+    if not wp_api_url or wp_api_url == "null" or wp_api_url.strip() == "":
+        raise ValueError("WordPress API URL is required but not provided or is empty/null")
+    
+    # Use the correct endpoint URL
+    existing_url = wp_api_url.rstrip("/") + "/wp-json/promostandards-importer/v1/existing-products"
     headers = {"X-API-Key": wp_api_key}
     auth = (
         (basic_auth_user, basic_auth_pass)
@@ -89,8 +91,16 @@ def import_product_to_wp(
     product, wp_api_url, wp_api_key, basic_auth_user=None, basic_auth_pass=None
 ):
     """Import a single product to WordPress via REST API."""
-    headers = {"Authorization": f"Bearer {wp_api_key}"}
-    files = {"file": ("product.json", json.dumps(product), "application/json")}
+    # Validate URL
+    if not wp_api_url or wp_api_url == "null" or wp_api_url.strip() == "":
+        raise ValueError("WordPress API URL is required but not provided or is empty/null")
+    
+    # Use the correct endpoint and headers
+    import_url = wp_api_url.rstrip("/") + "/wp-json/promostandards-importer/v1/upload"
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-Key": wp_api_key
+    }
     auth = (
         (basic_auth_user, basic_auth_pass)
         if basic_auth_user and basic_auth_pass
@@ -98,10 +108,18 @@ def import_product_to_wp(
     )
     try:
         resp = requests.post(
-            wp_api_url + "/upload", headers=headers, files=files, auth=auth, timeout=60
+            import_url, 
+            headers=headers, 
+            json=product,  # Send as JSON, not as file
+            auth=auth, 
+            timeout=60
         )
         if resp.status_code == 200:
-            return True, resp.json()
+            result = resp.json()
+            if result.get('success'):
+                return True, result
+            else:
+                return False, result.get('message', 'Import failed')
         else:
             logging.warning(f"Failed to import product: {resp.status_code} {resp.text}")
             return False, resp.text
@@ -133,6 +151,17 @@ def main():
     parser.add_argument("--wp-basic-auth-user", default=os.getenv("WP_BASIC_AUTH_USER"))
     parser.add_argument("--wp-basic-auth-pass", default=os.getenv("WP_BASIC_AUTH_PASS"))
     args = parser.parse_args()
+
+    # Validate required arguments
+    if not args.wp_api_url or args.wp_api_url == "null" or args.wp_api_url.strip() == "":
+        print("❌ Error: WordPress API URL is required but not provided or is empty/null")
+        print("   Please provide --wp-api-url parameter or set WP_API_URL environment variable")
+        sys.exit(1)
+    
+    if not args.wp_api_key or args.wp_api_key == "null" or args.wp_api_key.strip() == "":
+        print("❌ Error: WordPress API Key is required but not provided or is empty/null")
+        print("   Please provide --wp-api-key parameter or set WP_API_KEY environment variable")
+        sys.exit(1)
 
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"

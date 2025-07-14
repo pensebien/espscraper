@@ -90,8 +90,22 @@ jobs:
         run: |
           # Try to fetch from WordPress, but don't fail if it doesn't work
           curl -s -u "${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}" "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}" > params.json || echo '{"api_url": "", "api_key": ""}' > params.json
-          echo "WP_API_URL=$(jq -r .api_url params.json)" >> $GITHUB_ENV
-          echo "WP_API_KEY=$(jq -r .api_key params.json)" >> $GITHUB_ENV
+          
+          # Use WordPress values if available, otherwise use input parameters
+          WP_API_URL_FROM_WP=$(jq -r .api_url params.json)
+          WP_API_KEY_FROM_WP=$(jq -r .api_key params.json)
+          
+          # Use WordPress values if not empty, otherwise use input parameters
+          if [ "$WP_API_URL_FROM_WP" != "" ] && [ "$WP_API_URL_FROM_WP" != "null" ]; then
+            echo "WP_API_URL=$WP_API_URL_FROM_WP" >> $GITHUB_ENV
+            echo "WP_API_KEY=$WP_API_KEY_FROM_WP" >> $GITHUB_ENV
+            echo "Using WordPress configuration"
+          else
+            echo "WP_API_URL=${{ github.event.inputs.wp_api_url }}" >> $GITHUB_ENV
+            echo "WP_API_KEY=${{ github.event.inputs.wp_api_key }}" >> $GITHUB_ENV
+            echo "Using input parameters"
+          fi
+          
           echo "WordPress integration status: $(jq -r .api_url params.json | grep -q '^$' && echo 'Not configured' || echo 'Configured')"
         env:
           WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
