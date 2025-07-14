@@ -32,7 +32,9 @@ def save_progress(progress):
         json.dump(progress, f, indent=2)
 
 
-def update_heartbeat(status, imported=0, errors=0, total=0, current_product=None, mode=None):
+def update_heartbeat(
+    status, imported=0, errors=0, total=0, current_product=None, mode=None
+):
     """Update heartbeat file with current progress."""
     heartbeat = {
         "status": status,  # "running", "completed", "error", "stopped"
@@ -43,9 +45,9 @@ def update_heartbeat(status, imported=0, errors=0, total=0, current_product=None
         "current_product": current_product,
         "mode": mode,
         "timestamp": datetime.now().isoformat(),
-        "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
-    
+
     with open(HEARTBEAT_FILE, "w") as f:
         json.dump(heartbeat, f, indent=2)
 
@@ -62,10 +64,23 @@ def fetch_existing_products(
     """Fetch existing products from WordPress for sync mode."""
     # Validate URL
     if not wp_api_url or wp_api_url == "null" or wp_api_url.strip() == "":
-        raise ValueError("WordPress API URL is required but not provided or is empty/null")
-    
+        raise ValueError(
+            "WordPress API URL is required but not provided or is empty/null"
+        )
+
+    # Extract base URL from the upload URL
+    base_url = wp_api_url.replace("/wp-json/promostandards-importer/v1/upload", "")
+
+    if wp_api_url.endswith("/upload"):
+        existing_url = wp_api_url.replace("/upload", "/existing-products")
+    else:
+        # fallback, just append
+        existing_url = wp_api_url.rstrip("/") + "/existing-products"
+
     # Use the correct endpoint URL
-    existing_url = wp_api_url.rstrip("/") + "/wp-json/promostandards-importer/v1/existing-products"
+    # existing_url = (
+    #     base_url.rstrip("/") + "/wp-json/promostandards-importer/v1/existing-products"
+    # )
     headers = {"X-API-Key": wp_api_key}
     auth = (
         (basic_auth_user, basic_auth_pass)
@@ -93,14 +108,13 @@ def import_product_to_wp(
     """Import a single product to WordPress via REST API."""
     # Validate URL
     if not wp_api_url or wp_api_url == "null" or wp_api_url.strip() == "":
-        raise ValueError("WordPress API URL is required but not provided or is empty/null")
-    
-    # Use the correct endpoint and headers
-    import_url = wp_api_url.rstrip("/") + "/wp-json/promostandards-importer/v1/upload"
-    headers = {
-        "Content-Type": "application/json",
-        "X-API-Key": wp_api_key
-    }
+        raise ValueError(
+            "WordPress API URL is required but not provided or is empty/null"
+        )
+
+    # Use the provided upload URL directly
+    import_url = wp_api_url
+    headers = {"Content-Type": "application/json", "X-API-Key": wp_api_key}
     auth = (
         (basic_auth_user, basic_auth_pass)
         if basic_auth_user and basic_auth_pass
@@ -108,18 +122,18 @@ def import_product_to_wp(
     )
     try:
         resp = requests.post(
-            import_url, 
-            headers=headers, 
+            import_url,
+            headers=headers,
             json=product,  # Send as JSON, not as file
-            auth=auth, 
-            timeout=60
+            auth=auth,
+            timeout=60,
         )
         if resp.status_code == 200:
             result = resp.json()
-            if result.get('success'):
+            if result.get("success"):
                 return True, result
             else:
-                return False, result.get('message', 'Import failed')
+                return False, result.get("message", "Import failed")
         else:
             logging.warning(f"Failed to import product: {resp.status_code} {resp.text}")
             return False, resp.text
@@ -148,19 +162,65 @@ def main():
     )
     parser.add_argument("--wp-api-url", default=os.getenv("WP_API_URL"), required=True)
     parser.add_argument("--wp-api-key", default=os.getenv("WP_API_KEY"), required=True)
-    parser.add_argument("--wp-basic-auth-user", default=os.getenv("WP_BASIC_AUTH_USER"))
-    parser.add_argument("--wp-basic-auth-pass", default=os.getenv("WP_BASIC_AUTH_PASS"))
+    parser.add_argument(
+        "--wp-basic-auth-user", default=os.getenv("WP_BASIC_AUTH_USER"), required=True
+    )
+    parser.add_argument(
+        "--wp-basic-auth-pass", default=os.getenv("WP_BASIC_AUTH_PASS"), required=True
+    )
     args = parser.parse_args()
 
     # Validate required arguments
-    if not args.wp_api_url or args.wp_api_url == "null" or args.wp_api_url.strip() == "":
-        print("❌ Error: WordPress API URL is required but not provided or is empty/null")
-        print("   Please provide --wp-api-url parameter or set WP_API_URL environment variable")
+    if (
+        not args.wp_api_url
+        or args.wp_api_url == "null"
+        or args.wp_api_url.strip() == ""
+    ):
+        print(
+            "❌ Error: WordPress API URL is required but not provided or is empty/null"
+        )
+        print(
+            "   Please provide --wp-api-url parameter or set WP_API_URL environment variable"
+        )
         sys.exit(1)
-    
-    if not args.wp_api_key or args.wp_api_key == "null" or args.wp_api_key.strip() == "":
-        print("❌ Error: WordPress API Key is required but not provided or is empty/null")
-        print("   Please provide --wp-api-key parameter or set WP_API_KEY environment variable")
+
+    if (
+        not args.wp_api_key
+        or args.wp_api_key == "null"
+        or args.wp_api_key.strip() == ""
+    ):
+        print(
+            "❌ Error: WordPress API Key is required but not provided or is empty/null"
+        )
+        print(
+            "   Please provide --wp-api-key parameter or set WP_API_KEY environment variable"
+        )
+        sys.exit(1)
+
+    if (
+        not args.wp_basic_auth_user
+        or args.wp_basic_auth_user == "null"
+        or args.wp_basic_auth_user.strip() == ""
+    ):
+        print(
+            "❌ Error: WordPress Basic Auth username is required but not provided or is empty/null"
+        )
+        print(
+            "   Please provide --wp-basic-auth-user parameter or set WP_BASIC_AUTH_USER environment variable"
+        )
+        sys.exit(1)
+
+    if (
+        not args.wp_basic_auth_pass
+        or args.wp_basic_auth_pass == "null"
+        or args.wp_basic_auth_pass.strip() == ""
+    ):
+        print(
+            "❌ Error: WordPress Basic Auth password is required but not provided or is empty/null"
+        )
+        print(
+            "   Please provide --wp-basic-auth-pass parameter or set WP_BASIC_AUTH_PASS environment variable"
+        )
         sys.exit(1)
 
     logging.basicConfig(
@@ -192,7 +252,14 @@ def main():
     existing_products = {}
     if args.mode == "sync":
         print("🔍 Fetching existing products from WordPress for sync mode...")
-        update_heartbeat("fetching_existing", imported, 0, args.product_limit, "Fetching existing products...", args.mode)
+        update_heartbeat(
+            "fetching_existing",
+            imported,
+            0,
+            args.product_limit,
+            "Fetching existing products...",
+            args.mode,
+        )
         existing_products = fetch_existing_products(
             args.wp_api_url,
             args.wp_api_key,
@@ -211,7 +278,14 @@ def main():
     current_line_number = 0
 
     # Update heartbeat with initial state
-    update_heartbeat("running", current_imported, current_errors, total, "Starting import...", args.mode)
+    update_heartbeat(
+        "running",
+        current_imported,
+        current_errors,
+        total,
+        "Starting import...",
+        args.mode,
+    )
 
     # Iterate batches and lines, resuming as needed
     batch_files = [
@@ -219,42 +293,44 @@ def main():
         for f in sorted(os.listdir(bp.batch_dir))
         if f.startswith(bp.batch_prefix) and f.endswith(".jsonl")
     ]
-    
+
     print(f"📁 Found {len(batch_files)} batch files to process")
-    
+
     for batch_file in batch_files:
         batch_path = os.path.join(bp.batch_dir, batch_file)
         skip_lines = batch_line_map.get(batch_file, 0)
-        
+
         print(f"📄 Processing batch file: {batch_file}")
-        
+
         with open(batch_path, "r") as f:
             for line_num, line in enumerate(f, 1):
                 if current_imported >= total:
                     print(f"✅ Reached product limit ({total}). Stopping import.")
                     break
-                    
+
                 if line_num <= skip_lines:
                     continue  # Already processed in previous run
-                    
+
                 line = line.strip()
                 if not line:
                     continue
-                    
+
                 # Additional check for whitespace-only lines
                 if not line or line.isspace():
                     continue
-                    
+
                 try:
                     product = json.loads(line)
                     product_id = str(
                         product.get("ProductID") or product.get("product_id")
                     )
-                    product_name = product.get("Name") or product.get("name", "Unknown Product")
-                    
+                    product_name = product.get("Name") or product.get(
+                        "name", "Unknown Product"
+                    )
+
                     if product_id in imported_ids:
                         continue  # Already imported
-                        
+
                     # Sync mode: skip if not new/updated
                     if args.mode == "sync" and existing_products:
                         store_info = existing_products.get(product_id)
@@ -266,11 +342,18 @@ def main():
                         )
                         if store_date and scraped_date and scraped_date <= store_date:
                             continue
-                            
+
                     # Update heartbeat with current product
                     current_product_info = f"{product_name} (ID: {product_id})"
-                    update_heartbeat("running", current_imported, current_errors, total, current_product_info, args.mode)
-                    
+                    update_heartbeat(
+                        "running",
+                        current_imported,
+                        current_errors,
+                        total,
+                        current_product_info,
+                        args.mode,
+                    )
+
                     # Import
                     success, result = import_product_to_wp(
                         product,
@@ -279,7 +362,7 @@ def main():
                         args.wp_basic_auth_user,
                         args.wp_basic_auth_pass,
                     )
-                    
+
                     if success:
                         current_imported += 1
                         imported_ids.add(product_id)
@@ -287,53 +370,94 @@ def main():
                         print(f"✅ Imported: {product_name} (ID: {product_id})")
                     else:
                         current_errors += 1
-                        print(f"❌ Failed to import: {product_name} (ID: {product_id}) - {result}")
-                        
+                        print(
+                            f"❌ Failed to import: {product_name} (ID: {product_id}) - {result}"
+                        )
+
                     # Update progress file
-                    save_progress({
-                        "imported": current_imported,
-                        "errors": current_errors,
-                        "imported_ids": list(imported_ids),
-                        "last_batch_file": batch_file,
-                        "last_line_number": line_num,
-                        "batch_line_map": batch_line_map,
-                        "mode": args.mode,
-                        "limit": args.product_limit,
-                        "timestamp": datetime.now().isoformat()
-                    })
-                    
+                    save_progress(
+                        {
+                            "imported": current_imported,
+                            "errors": current_errors,
+                            "imported_ids": list(imported_ids),
+                            "last_batch_file": batch_file,
+                            "last_line_number": line_num,
+                            "batch_line_map": batch_line_map,
+                            "mode": args.mode,
+                            "limit": args.product_limit,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                    )
+
                     # Update heartbeat every 5 products or on errors
                     if current_imported % 5 == 0 or not success:
-                        update_heartbeat("running", current_imported, current_errors, total, current_product_info, args.mode)
-                        
+                        update_heartbeat(
+                            "running",
+                            current_imported,
+                            current_errors,
+                            total,
+                            current_product_info,
+                            args.mode,
+                        )
+
                 except json.JSONDecodeError as e:
                     current_errors += 1
-                    print(f"❌ JSON parsing error on line {line_num} in {batch_file}: {e}")
+                    print(
+                        f"❌ JSON parsing error on line {line_num} in {batch_file}: {e}"
+                    )
                     print(f"   Line content (first 100 chars): {repr(line[:100])}")
-                    update_heartbeat("running", current_imported, current_errors, total, f"JSON Error: {str(e)}", args.mode)
+                    update_heartbeat(
+                        "running",
+                        current_imported,
+                        current_errors,
+                        total,
+                        f"JSON Error: {str(e)}",
+                        args.mode,
+                    )
                 except Exception as e:
                     current_errors += 1
                     print(f"❌ Error processing line {line_num} in {batch_file}: {e}")
-                    update_heartbeat("running", current_imported, current_errors, total, f"Error: {str(e)}", args.mode)
-                    
+                    update_heartbeat(
+                        "running",
+                        current_imported,
+                        current_errors,
+                        total,
+                        f"Error: {str(e)}",
+                        args.mode,
+                    )
+
         if current_imported >= total:
             break
 
     # Final update
     end_time = datetime.now()
     duration = (end_time - start_time).total_seconds()
-    
+
     print(f"\n🎉 Import complete!")
     print(f"📊 Total imported: {current_imported}")
     print(f"❌ Total errors: {current_errors}")
     print(f"⏱️ Duration: {duration:.1f} seconds")
-    
+
     # Update heartbeat with completion status
     if current_errors == 0:
-        update_heartbeat("completed", current_imported, current_errors, total, "Import completed successfully", args.mode)
+        update_heartbeat(
+            "completed",
+            current_imported,
+            current_errors,
+            total,
+            "Import completed successfully",
+            args.mode,
+        )
     else:
-        update_heartbeat("completed_with_errors", current_imported, current_errors, total, f"Import completed with {current_errors} errors", args.mode)
-    
+        update_heartbeat(
+            "completed_with_errors",
+            current_imported,
+            current_errors,
+            total,
+            f"Import completed with {current_errors} errors",
+            args.mode,
+        )
+
     # Clean up progress file on successful completion
     if current_imported > 0 and current_errors == 0:
         cleanup_heartbeat()
