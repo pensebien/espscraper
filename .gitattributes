@@ -3,7 +3,6 @@
 espscraper/data/final_product_details.jsonl filter=lfs diff=lfs merge=lfs -text
 
 # Keep batch files as regular files for direct processing
-batch/*.jsonl -filter=lfs -diff=lfs -merge=lfs -text
 espscraper/data/*.jsonl -filter=lfs -diff=lfs -merge=lfs -text
 
 # Other large files that should use LFS
