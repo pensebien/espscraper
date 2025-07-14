@@ -36,6 +36,24 @@ jobs:
         with:
           python-version: "3.10"
 
+      - name: 📥 Handle Git LFS files
+        run: |
+          echo "=== Handling Git LFS files ==="
+          # Install git-lfs if not available
+          if ! command -v git-lfs &> /dev/null; then
+            echo "Installing git-lfs..."
+            curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | sudo bash
+            sudo apt-get install git-lfs
+          fi
+          
+          # Initialize git-lfs and pull actual files
+          git lfs install
+          git lfs pull
+          
+          echo "=== Checking batch files after LFS pull ==="
+          ls -la batch/ 2>/dev/null || echo "No batch directory found"
+          find . -name "*.jsonl" -type f | head -10 || echo "No JSONL files found"
+
       - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
@@ -53,35 +71,51 @@ jobs:
         run: |
           echo "=== Fetching latest files from artifacts branch ==="
 
-          # Try to fetch the artifacts branch
+          # Create batch directory and clear it
           mkdir -p batch
           rm -f batch/*.jsonl
+          echo "✅ Cleared batch directory"
+
+          # Check if artifacts branch exists
           if git ls-remote --heads origin artifacts | grep -q artifacts; then
             echo "✅ Artifacts branch exists, fetching latest files..."
 
             # Fetch the artifacts branch
             git fetch origin artifacts:artifacts || echo "Could not fetch artifacts branch"
 
-            # Copy latest files if they exist
-            if [ -f "artifacts-branch/espscraper/data/api_scraped_links.jsonl" ]; then
-              cp artifacts-branch/espscraper/data/api_scraped_links.jsonl espscraper/data/
+            # Check what we have in the artifacts branch
+            echo "=== Contents of artifacts branch ==="
+            git ls-tree -r artifacts --name-only | grep -E "\.(jsonl|json)$" || echo "No JSON/JSONL files found in artifacts branch"
+
+            # Copy latest files if they exist (handle Git LFS)
+            if [ -f "artifacts/espscraper/data/api_scraped_links.jsonl" ]; then
+              cp artifacts/espscraper/data/api_scraped_links.jsonl espscraper/data/
               echo "✅ Updated api_scraped_links.jsonl from artifacts branch"
             fi
 
-            if [ -f "artifacts-branch/final_product_details.jsonl" ]; then
-              cp artifacts-branch/final_product_details.jsonl espscraper/data/
+            if [ -f "artifacts/final_product_details.jsonl" ]; then
+              cp artifacts/final_product_details.jsonl espscraper/data/
               echo "✅ Updated final_product_details.jsonl from artifacts branch"
             fi
 
-            if [ -d "artifacts-branch/batch" ]; then
-              cp artifacts-branch/batch/*.jsonl batch/ || echo "No batch files to copy"
-              echo "✅ Copied batch files to ./batch/"
+            # Copy batch files with better error handling
+            if [ -d "artifacts/batch" ]; then
+              echo "=== Copying batch files from artifacts/batch/ ==="
+              ls -la artifacts/batch/ || echo "No files in artifacts/batch/"
+              
+              # Copy all JSONL files from artifacts/batch to local batch/
+              find artifacts/batch -name "*.jsonl" -exec cp {} batch/ \; || echo "No batch files to copy"
+              
+              echo "=== Batch files after copy ==="
+              ls -la batch/ || echo "No batch files found after copy"
+            else
+              echo "⚠️ No artifacts/batch directory found"
             fi
 
             # Show file sizes after update
             echo "=== File sizes after update ==="
-            ls -la espscraper/data/*.jsonl || echo "No JSONL files found"
-            ls -la batch_*.jsonl 2>/dev/null || echo "No batch files found"
+            ls -la espscraper/data/*.jsonl 2>/dev/null || echo "No JSONL files found in espscraper/data"
+            ls -la batch/*.jsonl 2>/dev/null || echo "No batch files found in batch/"
 
           else
             echo "⚠️ Artifacts branch does not exist yet, starting fresh"
