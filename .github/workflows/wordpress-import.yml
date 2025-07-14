@@ -54,6 +54,8 @@ jobs:
           echo "=== Fetching latest files from artifacts branch ==="
 
           # Try to fetch the artifacts branch
+          mkdir -p batch
+          rm -f batch/*.jsonl
           if git ls-remote --heads origin artifacts | grep -q artifacts; then
             echo "✅ Artifacts branch exists, fetching latest files..."
 
@@ -72,8 +74,8 @@ jobs:
             fi
 
             if [ -d "artifacts-branch/batch" ]; then
-              cp -r artifacts-branch/batch/* . || echo "No batch files to copy"
-              echo "✅ Updated batch files from artifacts branch"
+              cp artifacts-branch/batch/*.jsonl batch/ || echo "No batch files to copy"
+              echo "✅ Copied batch files to ./batch/"
             fi
 
             # Show file sizes after update
