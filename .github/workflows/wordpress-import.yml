@@ -87,6 +87,14 @@ jobs:
             echo "=== Contents of artifacts branch ==="
             git ls-tree -r artifacts --name-only | grep -E "\.(jsonl|json)$" || echo "No JSON/JSONL files found in artifacts branch"
 
+            # Pull LFS files from artifacts branch specifically
+            echo "=== Pulling LFS files from artifacts branch ==="
+            git lfs pull origin artifacts --include="batch/*.jsonl" || echo "No LFS files to pull from artifacts branch"
+            
+            # Also try to checkout specific files from artifacts branch
+            echo "=== Checking out batch files from artifacts branch ==="
+            git checkout artifacts -- batch/ 2>/dev/null || echo "Could not checkout batch files from artifacts branch"
+
             # Copy latest files if they exist (handle Git LFS)
             if [ -f "artifacts/espscraper/data/api_scraped_links.jsonl" ]; then
               cp artifacts/espscraper/data/api_scraped_links.jsonl espscraper/data/
@@ -103,11 +111,36 @@ jobs:
               echo "=== Copying batch files from artifacts/batch/ ==="
               ls -la artifacts/batch/ || echo "No files in artifacts/batch/"
               
+              # First, ensure we have the actual files (not LFS pointers)
+              echo "=== Checking if batch files are LFS pointers ==="
+              for file in artifacts/batch/*.jsonl; do
+                if [ -f "$file" ]; then
+                  echo "File: $file"
+                  file -b "$file" || echo "Could not determine file type"
+                  head -c 100 "$file" || echo "Could not read file"
+                fi
+              done
+              
+              # Try to pull LFS files specifically for batch directory
+              echo "=== Pulling LFS files for batch directory ==="
+              git lfs pull --include="batch/*.jsonl" || echo "No LFS files to pull for batch"
+              
               # Copy all JSONL files from artifacts/batch to local batch/
-              find artifacts/batch -name "*.jsonl" -exec cp {} batch/ \; || echo "No batch files to copy"
+              echo "=== Copying batch files ==="
+              cp artifacts/batch/*.jsonl batch/ 2>/dev/null || echo "No batch files to copy"
               
               echo "=== Batch files after copy ==="
               ls -la batch/ || echo "No batch files found after copy"
+              
+              # Verify the copied files are actual files, not pointers
+              echo "=== Verifying copied batch files ==="
+              for file in batch/*.jsonl; do
+                if [ -f "$file" ]; then
+                  echo "Copied file: $file"
+                  file -b "$file" || echo "Could not determine file type"
+                  wc -l "$file" || echo "Could not count lines"
+                fi
+              done
             else
               echo "⚠️ No artifacts/batch directory found"
             fi
