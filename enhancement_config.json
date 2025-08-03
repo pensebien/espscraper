@@ -1,0 +1,47 @@
+{
+    "enhancement": {
+        "enable_art_templates": true,
+        "download_art_templates": false,
+        "art_template_base_url": "https://www.hitpromo.net",
+        "art_template_cache_dir": "art_templates",
+        "enable_ocr": true,
+        "enable_visual_detection": true,
+        "confidence_threshold": 0.6
+    },
+    "fpd": {
+        "max_imprint_width": 400,
+        "max_imprint_height": 300,
+        "min_imprint_width": 50,
+        "min_imprint_height": 50,
+        "default_stage_width": 800,
+        "default_stage_height": 600,
+        "enable_imprint_detection": true,
+        "enable_design_areas": true,
+        "dpi": 150
+    },
+    "batch_processing": {
+        "batch_size": 100,
+        "enable_enhancement": true,
+        "enhancement_timeout": 30,
+        "retry_failed_enhancements": true,
+        "max_retries": 3
+    },
+    "wordpress": {
+        "api_url": "https://tmg.dedicatedmkt.com/wp-json/promostandards-importer/v1/upload",
+        "api_key": "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",
+        "base_url": "https://tmg.dedicatedmkt.com",
+        "auth_method": "bearer",
+        "basic_auth_user": "",
+        "basic_auth_pass": "",
+        "batch_size": 50,
+        "timeout": 30
+    },
+    "workflow": {
+        "mode": "enhanced",
+        "fallback_to_basic": true,
+        "log_enhancement_stats": true,
+        "save_art_templates": false,
+        "enable_enhancement": true,
+        "enable_import": false
+    }
+}
