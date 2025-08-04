@@ -1,0 +1,35 @@
+{
+    "environments": {
+        "local": {
+            "name": "Local Development",
+            "base_url": "http://plugin-dev.local",
+            "api_url": "http://plugin-dev.local/wp-json/promostandards-importer/v1/upload",
+            "api_key": "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",
+            "auth_method": "bearer",
+            "basic_auth_user": "",
+            "basic_auth_pass": "",
+            "description": "Local development environment"
+        },
+        "live": {
+            "name": "Live Production",
+            "base_url": "https://tmg.dedicatedmkt.com",
+            "api_url": "https://tmg.dedicatedmkt.com/wp-json/promostandards-importer/v1/upload",
+            "api_key": "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",
+            "auth_method": "bearer",
+            "basic_auth_user": "",
+            "basic_auth_pass": "",
+            "description": "Live production environment"
+        },
+        "staging": {
+            "name": "Staging Environment",
+            "base_url": "",
+            "api_url": "",
+            "api_key": "",
+            "auth_method": "bearer",
+            "basic_auth_user": "",
+            "basic_auth_pass": "",
+            "description": "Staging environment (configure as needed)"
+        }
+    },
+    "default_environment": "live"
+}
