@@ -1,18 +1,18 @@
 === Fixer Enhancement Summary ===
-Date: Thu Aug  7 09:37:17 UTC 2025
+Date: Thu Aug  7 10:22:05 UTC 2025
 Repository: pensebien/espscraper
 Workflow: Fixer Enhancement (Batch Files)
-Run ID: 16800796970
+Run ID: 16800967777
 Force Re-enhancement: false
 
 Enhanced files:
-total 74172
-drwxr-xr-x  2 runner docker    4096 Aug  7 09:37 .
-drwxr-xr-x 13 runner docker    4096 Aug  7 09:37 ..
--rw-r--r--  1 runner docker   83841 Aug  7 09:37 batch_20250713_080042_1_enhanced.jsonl
--rw-r--r--  1 runner docker     130 Aug  7 09:37 batch_20250713_080042_1_enhanced_enhanced.jsonl
--rw-r--r--  1 runner docker   33514 Aug  7 09:37 batch_20250713_080055_2_enhanced.jsonl
--rw-r--r--  1 runner docker  106609 Aug  7 09:37 batch_20250713_152031_3_enhanced.jsonl
--rw-r--r--  1 runner docker 1201255 Aug  7 09:37 batch_20250713_153317_4_enhanced.jsonl
--rw-r--r--  1 runner docker  725698 Aug  7 09:37 batch_20250713_153550_5_enhanced.jsonl
--rw-r--r--  1 runner docker 1095383 Aug  7 09:37 batch_20250713_172439_6_enhanced.jsonl
+total 105392
+drwxr-xr-x  2 runner docker    4096 Aug  7 09:44 .
+drwxr-xr-x 13 runner docker    4096 Aug  7 10:22 ..
+-rw-r--r--  1 runner docker  121660 Aug  7 10:22 batch_20250713_080042_1_enhanced.jsonl
+-rw-r--r--  1 runner docker     130 Aug  7 10:22 batch_20250713_080042_1_enhanced_enhanced.jsonl
+-rw-r--r--  1 runner docker   49406 Aug  7 10:22 batch_20250713_080055_2_enhanced.jsonl
+-rw-r--r--  1 runner docker  155409 Aug  7 10:22 batch_20250713_152031_3_enhanced.jsonl
+-rw-r--r--  1 runner docker 1704515 Aug  7 10:22 batch_20250713_153317_4_enhanced.jsonl
+-rw-r--r--  1 runner docker 1042925 Aug  7 10:22 batch_20250713_153550_5_enhanced.jsonl
+-rw-r--r--  1 runner docker 1558574 Aug  7 10:22 batch_20250713_172439_6_enhanced.jsonl
