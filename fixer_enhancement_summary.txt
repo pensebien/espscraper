@@ -1,11 +1,18 @@
 === Fixer Enhancement Summary ===
-Date: Wed Aug  6 13:40:19 UTC 2025
+Date: Thu Aug  7 01:41:10 UTC 2025
 Repository: pensebien/espscraper
 Workflow: Fixer Enhancement (Batch Files)
-Run ID: 16777519929
+Run ID: 16792944851
 Force Re-enhancement: false
 
 Enhanced files:
-total 8
-drwxr-xr-x  2 runner docker 4096 Aug  6 13:40 .
-drwxr-xr-x 13 runner docker 4096 Aug  6 13:40 ..
+total 74172
+drwxr-xr-x  2 runner docker    4096 Aug  7 01:41 .
+drwxr-xr-x 13 runner docker    4096 Aug  7 01:41 ..
+-rw-r--r--  1 runner docker   83840 Aug  7 01:41 batch_20250713_080042_1_enhanced.jsonl
+-rw-r--r--  1 runner docker     130 Aug  7 01:41 batch_20250713_080042_1_enhanced_enhanced.jsonl
+-rw-r--r--  1 runner docker   33515 Aug  7 01:41 batch_20250713_080055_2_enhanced.jsonl
+-rw-r--r--  1 runner docker  106608 Aug  7 01:41 batch_20250713_152031_3_enhanced.jsonl
+-rw-r--r--  1 runner docker 1201261 Aug  7 01:41 batch_20250713_153317_4_enhanced.jsonl
+-rw-r--r--  1 runner docker  725700 Aug  7 01:41 batch_20250713_153550_5_enhanced.jsonl
+-rw-r--r--  1 runner docker 1095381 Aug  7 01:41 batch_20250713_172439_6_enhanced.jsonl
