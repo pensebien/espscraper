@@ -1,0 +1,13 @@
+{
+  "batch_file": "./batch/batch_20250713_191342_46.jsonl",
+  "enhanced_file": "enhanced/batch_20250713_191342_46_enhanced.jsonl",
+  "base_name": "batch_20250713_191342_46",
+  "total_lines": 50,
+  "last_processed_line": 50,
+  "last_processed_timestamp": "2025-08-14T23:28:30Z",
+  "workflow_run_id": "16978738234",
+  "workflow_run_number": "45",
+  "force_reprocess": true,
+  "resume": false,
+  "status": "completed"
+}
