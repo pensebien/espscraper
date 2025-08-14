@@ -4,9 +4,9 @@
   "base_name": "batch_test_1752230969_1",
   "total_lines": 1,
   "last_processed_line": 1,
-  "last_processed_timestamp": "2025-08-14T17:42:49Z",
-  "workflow_run_id": "16972518467",
-  "workflow_run_number": "40",
+  "last_processed_timestamp": "2025-08-14T22:54:43Z",
+  "workflow_run_id": "16978531359",
+  "workflow_run_number": "44",
   "force_reprocess": false,
   "resume": false,
   "status": "completed"
