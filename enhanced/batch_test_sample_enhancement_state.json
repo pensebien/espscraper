@@ -1,0 +1,13 @@
+{
+  "batch_file": "batch/batch_test_sample.jsonl",
+  "enhanced_file": "enhanced/batch_test_sample_enhanced.jsonl",
+  "base_name": "batch_test_sample",
+  "total_lines": 3,
+  "last_processed_line": 3,
+  "last_processed_timestamp": "2025-08-15T15:01:12Z",
+  "workflow_run_id": "16992756927",
+  "workflow_run_number": "52",
+  "force_reprocess": false,
+  "resume": false,
+  "status": "completed"
+}
