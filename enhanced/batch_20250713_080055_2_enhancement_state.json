@@ -4,9 +4,9 @@
   "base_name": "batch_20250713_080055_2",
   "total_lines": 2,
   "last_processed_line": 2,
-  "last_processed_timestamp": "2025-08-15T15:01:10Z",
-  "workflow_run_id": "16992756927",
-  "workflow_run_number": "52",
+  "last_processed_timestamp": "2025-08-15T15:11:57Z",
+  "workflow_run_id": "16992982582",
+  "workflow_run_number": "53",
   "force_reprocess": false,
   "resume": false,
   "status": "completed"
