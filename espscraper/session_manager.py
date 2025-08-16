@@ -245,6 +245,25 @@ class SessionManager:
                     logging.warning(f"⚠️ Failed to clean up Chrome user data directory: {e}")
 
 
+    def login(self):
+        """Simple login method for production use"""
+        try:
+            username = os.getenv("ESP_USERNAME")
+            password = os.getenv("ESP_PASSWORD")
+            products_url = os.getenv("PRODUCTS_URL")
+
+            if not all([username, password, products_url]):
+                logging.warning("❌ Missing environment variables")
+                return False
+
+            page_key, search_id = self.selenium_login_and_get_session_data(
+                username, password, products_url
+            )
+            return page_key is not None and search_id is not None
+        except Exception as e:
+            logging.exception(f"❌ Login failed: {e}")
+            return False
+
     def quit(self):
         """Clean up method"""
         pass
