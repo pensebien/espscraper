@@ -172,6 +172,14 @@ class SessionManager:
             options.add_argument("--no-default-browser-check")
             options.add_argument("--disable-default-apps")
             options.add_argument("--disable-sync")
+            # Use unique temporary user data directory to avoid conflicts
+            import tempfile
+            import os
+            import time
+            unique_id = f"{int(time.time())}_{os.getpid()}"
+            user_data_dir = os.path.join(tempfile.gettempdir(), f"chrome_temp_{unique_id}")
+            options.add_argument(f"--user-data-dir={user_data_dir}")
+            options.add_argument("--incognito")
 
             options.add_argument(
                 "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -227,6 +235,14 @@ class SessionManager:
             if should_quit_driver:
                 driver.quit()
                 logging.info("🤖 Selenium browser closed.")
+                # Clean up temporary user data directory
+                try:
+                    import shutil
+                    if 'user_data_dir' in locals():
+                        shutil.rmtree(user_data_dir, ignore_errors=True)
+                        logging.info(f"🧹 Cleaned up temporary Chrome user data directory: {user_data_dir}")
+                except Exception as e:
+                    logging.warning(f"⚠️ Failed to clean up Chrome user data directory: {e}")
 
 
     def login(self):
