@@ -157,6 +157,24 @@ class SessionManager:
                 options.add_argument("--headless=new")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-plugins")
+            options.add_argument("--disable-images")
+            options.add_argument("--disable-javascript")
+            options.add_argument("--disable-background-timer-throttling")
+            options.add_argument("--disable-backgrounding-occluded-windows")
+            options.add_argument("--disable-renderer-backgrounding")
+            options.add_argument("--disable-features=TranslateUI")
+            options.add_argument("--disable-ipc-flooding-protection")
+            # Use unique user data directory to avoid conflicts in CI
+            import tempfile
+            import os
+
+            user_data_dir = os.path.join(
+                tempfile.gettempdir(), f"chrome_user_data_{os.getpid()}"
+            )
+            options.add_argument(f"--user-data-dir={user_data_dir}")
             options.add_argument(
                 "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
@@ -211,6 +229,19 @@ class SessionManager:
             if should_quit_driver:
                 driver.quit()
                 logging.info("🤖 Selenium browser closed.")
+                # Clean up temporary user data directory
+                try:
+                    import shutil
+
+                    if "user_data_dir" in locals():
+                        shutil.rmtree(user_data_dir, ignore_errors=True)
+                        logging.info(
+                            f"🧹 Cleaned up temporary Chrome user data directory: {user_data_dir}"
+                        )
+                except Exception as e:
+                    logging.warning(
+                        f"⚠️ Failed to clean up Chrome user data directory: {e}"
+                    )
 
     def login(self):
         """Simple login method for testing"""

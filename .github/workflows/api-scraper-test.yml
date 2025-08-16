@@ -1,0 +1,148 @@
+name: API Scraper Test (Branch Testing)
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: 'Batch size for processing'
+        required: false
+        default: '10'
+      product_limit:
+        description: 'Product limit'
+        required: false
+        default: '100'
+      mode:
+        description: 'Scraping mode (scrape, new, missing)'
+        required: false
+        default: 'scrape'
+      force_link_collection:
+        description: 'Force link collection'
+        required: false
+        default: 'false'
+      max_link_age:
+        description: 'Maximum link age in hours'
+        required: false
+        default: '24'
+
+permissions:
+  contents: write
+
+jobs:
+  api_scraper_test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30  # Shorter timeout for testing
+
+    steps:
+      - name: 📥 Checkout repo
+        uses: actions/checkout@v5
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: 🔧 Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+          
+          # Kill any existing Chrome processes to avoid conflicts
+          sudo pkill -f chrome || true
+          sudo pkill -f chromedriver || true
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Cache Chrome WebDriver
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/selenium
+          key: ${{ runner.os }}-selenium-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-selenium-
+
+      - name: 📦 Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 📁 Create directories
+        run: |
+          mkdir -p espscraper/data
+          mkdir -p batch
+          mkdir -p tmp
+          mkdir -p logs
+          
+          # Clean up any existing Chrome user data directories
+          sudo rm -rf /tmp/chrome_user_data_* || true
+          sudo rm -rf /home/runner/.config/google-chrome || true
+
+      - name: 🚀 Run API scraper test
+        run: |
+          echo "=== Starting API scraper test ==="
+
+          # Set batch size from input or default
+          BATCH_SIZE=${BATCH_SIZE:-${{ github.event.inputs.batch_size || '10' }}}
+          PRODUCT_LIMIT=${PRODUCT_LIMIT:-${{ github.event.inputs.product_limit || '100' }}}
+          MODE=${MODE:-${{ github.event.inputs.mode || 'scrape' }}}
+          FORCE_LINK_COLLECTION=${FORCE_LINK_COLLECTION:-${{ github.event.inputs.force_link_collection || 'false' }}}
+          MAX_LINK_AGE=${MAX_LINK_AGE:-${{ github.event.inputs.max_link_age || '24' }}}
+
+          # Only add the flag if FORCE_LINK_COLLECTION is true
+          FORCE_LINK_COLLECTION_FLAG=""
+          if [ "$FORCE_LINK_COLLECTION" = "true" ]; then
+            FORCE_LINK_COLLECTION_FLAG="--force-link-collection"
+          fi
+
+          echo "Test Configuration:"
+          echo "  Batch Size: $BATCH_SIZE"
+          echo "  Product Limit: $PRODUCT_LIMIT"
+          echo "  Mode: $MODE"
+          echo "  Force Link Collection: $FORCE_LINK_COLLECTION"
+          echo "  Max Link Age: $MAX_LINK_AGE"
+
+          # Run the scraper with test parameters
+          python3 -m espscraper.production_main \
+            --batch-size $BATCH_SIZE \
+            --product-limit $PRODUCT_LIMIT \
+            --mode $MODE \
+            $FORCE_LINK_COLLECTION_FLAG \
+            --max-link-age $MAX_LINK_AGE
+        env:
+          ESP_USERNAME: ${{ secrets.ESP_USERNAME }}
+          ESP_PASSWORD: ${{ secrets.ESP_PASSWORD }}
+          PRODUCTS_URL: ${{ secrets.PRODUCTS_URL }}
+          SEARCH_API_URL: ${{ secrets.SEARCH_API_URL }}
+          GOTO_PAGE_API_URL: ${{ secrets.GOTO_PAGE_API_URL }}
+          PRODUCT_API_URL: ${{ secrets.PRODUCT_API_URL }}
+          PRODUCT_URL_TEMPLATE: ${{ secrets.PRODUCT_URL_TEMPLATE }}
+          API_SCRAPED_LINKS_FILE: espscraper/data/api_scraped_links.jsonl
+          PRODUCT_OUTPUT_FILE: espscraper/data/final_product_details.jsonl
+
+      - name: 📊 Test Results Summary
+        run: |
+          echo "=== Test Results Summary ==="
+          
+          if [ -f "espscraper/data/final_product_details.jsonl" ]; then
+            product_count=$(wc -l < espscraper/data/final_product_details.jsonl)
+            echo "✅ Test completed successfully"
+            echo "📊 Products scraped: $product_count"
+          else
+            echo "⚠️ No output file found"
+          fi
+          
+          if [ -d "batch" ]; then
+            batch_count=$(ls batch/batch_*.jsonl 2>/dev/null | wc -l)
+            echo "📦 Batch files created: $batch_count"
+          fi
+          
+          echo "🎯 Test workflow completed"

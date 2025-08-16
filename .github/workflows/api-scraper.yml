@@ -51,10 +51,10 @@ jobs:
           fi
 
       - name: 📥 Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🐍 Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
@@ -66,6 +66,10 @@ jobs:
           sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
+
+          # Kill any existing Chrome processes to avoid conflicts
+          sudo pkill -f chrome || true
+          sudo pkill -f chromedriver || true
 
       - name: Cache pip dependencies
         uses: actions/cache@v4
@@ -106,6 +110,10 @@ jobs:
           mkdir -p batch
           mkdir -p tmp
           mkdir -p logs
+
+          # Clean up any existing Chrome user data directories
+          sudo rm -rf /tmp/chrome_user_data_* || true
+          sudo rm -rf /home/runner/.config/google-chrome || true
 
       - name: 🔍 Check existing data
         run: |
@@ -240,7 +248,7 @@ jobs:
           fi
 
       - name: 📦 Checkout artifacts branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: artifacts
           path: artifacts-branch

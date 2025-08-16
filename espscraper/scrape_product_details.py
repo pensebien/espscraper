@@ -112,6 +112,15 @@ class ProductDetailScraper(BaseScraper):
         if not self.headless:
             options.add_argument("--start-maximized")
 
+        # Use unique user data directory to avoid conflicts in CI
+        import tempfile
+        import os
+
+        user_data_dir = os.path.join(
+            tempfile.gettempdir(), f"chrome_user_data_{os.getpid()}"
+        )
+        options.add_argument(f"--user-data-dir={user_data_dir}")
+
         service = Service(ChromeDriverManager().install())
         self.driver = webdriver.Chrome(service=service, options=options)
         self.driver.set_page_load_timeout(30)  # Increased from 15 to 30 seconds
@@ -131,6 +140,41 @@ class ProductDetailScraper(BaseScraper):
             pass
 
         logging.info("✅ Simple Chrome driver started successfully")
+
+    def cleanup(self):
+        """Clean up resources including temporary Chrome user data directories"""
+        try:
+            if hasattr(self, "driver") and self.driver:
+                self.driver.quit()
+                logging.info("🤖 Chrome driver closed during cleanup")
+
+            # Clean up any temporary user data directories
+            import tempfile
+            import os
+            import shutil
+            import glob
+
+            temp_dir = tempfile.gettempdir()
+            chrome_pattern = os.path.join(temp_dir, "chrome_user_data_*")
+            chrome_dirs = glob.glob(chrome_pattern)
+
+            for chrome_dir in chrome_dirs:
+                try:
+                    shutil.rmtree(chrome_dir, ignore_errors=True)
+                    logging.info(
+                        f"🧹 Cleaned up Chrome user data directory: {chrome_dir}"
+                    )
+                except Exception as e:
+                    logging.warning(
+                        f"⚠️ Failed to clean up Chrome directory {chrome_dir}: {e}"
+                    )
+
+        except Exception as e:
+            logging.warning(f"⚠️ Error during cleanup: {e}")
+
+    def __del__(self):
+        """Destructor to ensure cleanup"""
+        self.cleanup()
 
     def setup_selenium(self, driver=None):
         # This method is now only used as a callback if needed for custom setup after driver creation
@@ -171,6 +215,24 @@ class ProductDetailScraper(BaseScraper):
             options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-plugins")
+        options.add_argument("--disable-images")
+        options.add_argument("--disable-javascript")
+        options.add_argument("--disable-background-timer-throttling")
+        options.add_argument("--disable-backgrounding-occluded-windows")
+        options.add_argument("--disable-renderer-backgrounding")
+        options.add_argument("--disable-features=TranslateUI")
+        options.add_argument("--disable-ipc-flooding-protection")
+        # Use unique user data directory to avoid conflicts in CI
+        import tempfile
+        import os
+
+        user_data_dir = os.path.join(
+            tempfile.gettempdir(), f"chrome_user_data_{os.getpid()}"
+        )
+        options.add_argument(f"--user-data-dir={user_data_dir}")
         options.add_argument(
             "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
@@ -228,6 +290,17 @@ class ProductDetailScraper(BaseScraper):
         finally:
             driver.quit()
             logging.info("🤖 Selenium browser closed.")
+            # Clean up temporary user data directory
+            try:
+                import shutil
+
+                if "user_data_dir" in locals():
+                    shutil.rmtree(user_data_dir, ignore_errors=True)
+                    logging.info(
+                        f"🧹 Cleaned up temporary Chrome user data directory: {user_data_dir}"
+                    )
+            except Exception as e:
+                logging.warning(f"⚠️ Failed to clean up Chrome user data directory: {e}")
 
     def _load_cookies_into_driver(self, cookies):
         """Load cookies into the current driver and validate session"""
@@ -2395,6 +2468,18 @@ class ProductDetailScraper(BaseScraper):
 
 
 def main():
+    # Set up signal handlers for graceful cleanup
+    import signal
+
+    def signal_handler(signum, frame):
+        logging.info(f"🛑 Received signal {signum}, cleaning up...")
+        if "scraper" in locals():
+            scraper.cleanup()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     parser = argparse.ArgumentParser(description="Scrape product data from ESP Web.")
     parser.add_argument(
         "--limit",
@@ -2488,7 +2573,10 @@ def main():
         logging.info(
             f"🔢 Processing batch {args.batch_number} (products {start} to {end-1})"
         )
-    scraper.scrape_all_details(force_relogin=args.force_relogin)
+    try:
+        scraper.scrape_all_details(force_relogin=args.force_relogin)
+    finally:
+        scraper.cleanup()
 
 
 if __name__ == "__main__":
