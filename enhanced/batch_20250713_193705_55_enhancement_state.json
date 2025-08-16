@@ -1,13 +1,13 @@
 {
-  "batch_file": "./batch/batch_20250713_193705_55.jsonl",
+  "batch_file": "batch/batch_20250713_193705_55.jsonl",
   "enhanced_file": "enhanced/batch_20250713_193705_55_enhanced.jsonl",
   "base_name": "batch_20250713_193705_55",
   "total_lines": 50,
   "last_processed_line": 50,
-  "last_processed_timestamp": "2025-08-14T23:32:34Z",
-  "workflow_run_id": "16978738234",
-  "workflow_run_number": "45",
-  "force_reprocess": true,
+  "last_processed_timestamp": "2025-08-16T00:22:52Z",
+  "workflow_run_id": "17001761281",
+  "workflow_run_number": "55",
+  "force_reprocess": false,
   "resume": false,
   "status": "completed"
 }
