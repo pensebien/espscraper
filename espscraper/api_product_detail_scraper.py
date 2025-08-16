@@ -335,6 +335,14 @@ class ApiProductDetailScraper(BaseScraper):
             if time.time() - self.circuit_breaker_open_time < 60:
                 self.skipped_products.append(product_id)
                 logging.warning(f"🚨 Circuit breaker open, skipping product {product_id} (total skipped: {len(self.skipped_products)})")
+                # Log skipped products for retry as well
+                try:
+                    failed_products_file = os.path.join(os.getcwd(), "failed_products_api.txt")
+                    with open(failed_products_file, "a") as fail_log:
+                        fail_log.write(f"{product_id}\n")
+                    logging.info(f"📝 Logged skipped product {product_id} to {failed_products_file}")
+                except Exception as log_e:
+                    logging.warning(f"⚠️ Could not log skipped product ID: {log_e}")
                 return None
             else:
                 self.circuit_breaker_open = False
@@ -462,6 +470,25 @@ class ApiProductDetailScraper(BaseScraper):
         logging.error(
             f"❌ Failed to scrape product {product_id} after {self.config.max_retries} attempts"
         )
+        
+        # Log detailed failure information for debugging
+        logging.error(f"🔍 DEBUG: Product {product_id} failure details:")
+        logging.error(f"   - Consecutive failures: {self.consecutive_failures}")
+        logging.error(f"   - Circuit breaker open: {self.circuit_breaker_open}")
+        logging.error(f"   - Total requests: {self.stats['total_requests']}")
+        logging.error(f"   - Successful requests: {self.stats['successful_requests']}")
+        logging.error(f"   - Failed requests: {self.stats['failed_requests']}")
+        
+        # Log failed product for later retry
+        try:
+            # Use absolute path to ensure file is created in the right location
+            failed_products_file = os.path.join(os.getcwd(), "failed_products_api.txt")
+            with open(failed_products_file, "a") as fail_log:
+                fail_log.write(f"{product_id}\n")
+            logging.info(f"📝 Logged failed product {product_id} to {failed_products_file}")
+        except Exception as log_e:
+            logging.warning(f"⚠️ Could not log failed product ID: {log_e}")
+        
         return None
 
     def get_circuit_breaker_stats(self):
@@ -473,6 +500,65 @@ class ApiProductDetailScraper(BaseScraper):
             "total_skipped_products": len(self.skipped_products),
             "skipped_products": self.skipped_products.copy()
         }
+
+    def retry_failed_products(self):
+        """Retry failed products from failed_products_api.txt"""
+        failed_products_file = os.path.join(os.getcwd(), "failed_products_api.txt")
+        
+        logging.info(f"🔍 Checking for failed products file: {failed_products_file}")
+        logging.info(f"🔍 Current working directory: {os.getcwd()}")
+        logging.info(f"🔍 File exists: {os.path.exists(failed_products_file)}")
+        
+        if not os.path.exists(failed_products_file):
+            logging.info("✅ No failed products to retry")
+            return
+        
+        logging.info(f"🔄 Retrying failed products from {failed_products_file}...")
+        
+        try:
+            with open(failed_products_file, "r") as f:
+                failed_ids = [line.strip() for line in f if line.strip()]
+            
+            if not failed_ids:
+                logging.info("✅ No failed products to retry")
+                return
+            
+            logging.info(f"🔄 Retrying {len(failed_ids)} failed products...")
+            
+            # Reset circuit breaker for retry
+            self.circuit_breaker_open = False
+            self.consecutive_failures = 0
+            
+            successful_retries = 0
+            
+            for product_id in failed_ids:
+                logging.info(f"🔄 Retrying product {product_id}...")
+                
+                # Try to scrape the product again
+                product_data = self.scrape_product_api(product_id)
+                
+                if product_data:
+                    # Save the successfully retried product
+                    self.batch_processor.add_product(product_data)
+                    successful_retries += 1
+                    logging.info(f"✅ Successfully retried product {product_id}")
+                else:
+                    logging.warning(f"❌ Failed to retry product {product_id}")
+                
+                # Add delay between retries
+                time.sleep(self.config.min_delay)
+            
+            logging.info(f"✅ Retry completed: {successful_retries}/{len(failed_ids)} products successfully retried")
+            
+            # Remove the failed products file after retry
+            try:
+                os.remove(failed_products_file)
+                logging.info(f"🗑️ Removed {failed_products_file}")
+            except Exception as e:
+                logging.warning(f"⚠️ Could not remove {failed_products_file}: {e}")
+                
+        except Exception as e:
+            logging.error(f"❌ Error during failed products retry: {e}")
 
     def _get_related_products(
         self, product_id: str, session: requests.Session
@@ -796,6 +882,11 @@ class ApiProductDetailScraper(BaseScraper):
 
             logging.info("✅ Product scraping completed")
 
+            # Retry failed products
+            logging.info("🔄 Starting failed products retry process...")
+            self.retry_failed_products()
+            logging.info("✅ Failed products retry process completed")
+
         except KeyboardInterrupt:
             logging.info("🛑 Scraping interrupted by user")
             self._finalize_batches()
@@ -808,6 +899,13 @@ class ApiProductDetailScraper(BaseScraper):
             self._finalize_batches()
             self._save_progress()
             self._save_stats()
+            
+            # Still try to retry failed products even if there was an error
+            try:
+                self.retry_failed_products()
+            except Exception as retry_e:
+                logging.error(f"❌ Error during failed products retry: {retry_e}")
+            
             raise
 
     def _filter_products(self, product_ids: List[str], mode: str) -> List[str]:
