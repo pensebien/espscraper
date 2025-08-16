@@ -155,6 +155,7 @@ class ApiProductDetailScraper(BaseScraper):
         self.consecutive_failures = 0
         self.circuit_breaker_open = False
         self.circuit_breaker_open_time = 0
+        self.skipped_products = []  # Track products skipped due to circuit breaker
 
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -317,23 +318,32 @@ class ApiProductDetailScraper(BaseScraper):
         self.consecutive_failures += 1
         self.rate_limiter.record_failure()
 
+        logging.warning(f"⚠️ Consecutive failures: {self.consecutive_failures}/{self.config.max_consecutive_failures}")
+
         if (
             self.config.circuit_breaker_enabled
             and self.consecutive_failures >= self.config.max_consecutive_failures
         ):
             self.circuit_breaker_open = True
             self.circuit_breaker_open_time = time.time()
-            logging.warning("🚨 Circuit breaker opened due to consecutive failures")
+            logging.warning(f"🚨 Circuit breaker opened due to {self.consecutive_failures} consecutive failures")
+            logging.warning(f"🚨 Circuit breaker will remain open for 60 seconds, skipping requests")
 
     def scrape_product_api(self, product_id: str) -> Optional[ProductData]:
         """Scrape a single product using API with session management"""
         if self.circuit_breaker_open:
             if time.time() - self.circuit_breaker_open_time < 60:
-                logging.warning("🚨 Circuit breaker open, skipping request")
+                self.skipped_products.append(product_id)
+                logging.warning(f"🚨 Circuit breaker open, skipping product {product_id} (total skipped: {len(self.skipped_products)})")
                 return None
             else:
                 self.circuit_breaker_open = False
+                self.consecutive_failures = 0  # Reset failure count
                 logging.info("✅ Circuit breaker closed, resuming requests")
+                logging.info(f"✅ Failure count reset to 0. Total products skipped: {len(self.skipped_products)}")
+                if self.skipped_products:
+                    logging.info(f"📋 Skipped products: {', '.join(self.skipped_products[:10])}{'...' if len(self.skipped_products) > 10 else ''}")
+                    self.skipped_products = []  # Clear the list
 
         self.rate_limiter.wait_if_needed()
 
@@ -436,6 +446,7 @@ class ApiProductDetailScraper(BaseScraper):
 
             except Exception as e:
                 logging.error(f"❌ Unexpected error for product {product_id}: {e}")
+                logging.error(f"❌ Error type: {type(e).__name__}")
                 self._handle_failure()
 
             retry_count += 1
@@ -452,6 +463,16 @@ class ApiProductDetailScraper(BaseScraper):
             f"❌ Failed to scrape product {product_id} after {self.config.max_retries} attempts"
         )
         return None
+
+    def get_circuit_breaker_stats(self):
+        """Get circuit breaker statistics"""
+        return {
+            "consecutive_failures": self.consecutive_failures,
+            "circuit_breaker_open": self.circuit_breaker_open,
+            "max_consecutive_failures": self.config.max_consecutive_failures,
+            "total_skipped_products": len(self.skipped_products),
+            "skipped_products": self.skipped_products.copy()
+        }
 
     def _get_related_products(
         self, product_id: str, session: requests.Session
