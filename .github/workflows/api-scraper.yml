@@ -2,7 +2,7 @@ name: API Scraper (Batch Processing)
 
 on:
   schedule:
-    - cron: '0 2,3,4 * * *'
+    - cron: '0 2,3,4 * * *'  # Run at 2 AM, 3 AM, or 4 AM every day (fuzzy timing)
   workflow_dispatch:
     inputs:
       batch_size:
@@ -34,20 +34,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 💤 Fuzzy start (random delay and every-2-day check)
+      - name: 💤 Fuzzy start (48-hour schedule with random timing)
         run: |
           if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
-            # Only run every 2 days (even days since epoch)
-            if [ $(( $(date +%s) / 86400 % 2 )) -ne 0 ]; then
-              echo "Not a scheduled run day, exiting."
+            # Calculate days since epoch and check if it's an even day (every 48 hours)
+            DAYS_SINCE_EPOCH=$(( $(date +%s) / 86400 ))
+            if [ $(( DAYS_SINCE_EPOCH % 2 )) -ne 0 ]; then
+              echo "Not a 48-hour scheduled run day (day $DAYS_SINCE_EPOCH), exiting."
               exit 0
             fi
-            # Sleep for a random time between 0 and 60 minutes
-            SLEEP_MINUTES=$(( RANDOM % 61 ))
-            echo "Sleeping for $SLEEP_MINUTES minutes to add fuzziness..."
+            
+            # Add fuzzy timing: random delay between 0 and 120 minutes (0-2 hours)
+            # This spreads the execution time across 2-6 AM window
+            SLEEP_MINUTES=$(( RANDOM % 121 ))
+            echo "48-hour schedule triggered (day $DAYS_SINCE_EPOCH)."
+            echo "Fuzzy timing: Sleeping for $SLEEP_MINUTES minutes (execution window: 2-6 AM)..."
             sleep $(( SLEEP_MINUTES * 60 ))
+            
+            # Log the actual execution time
+            EXECUTION_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+            echo "✅ Starting execution at: $EXECUTION_TIME"
           else
-            echo "Manual run detected, skipping fuzzy delay."
+            echo "Manual run detected, skipping 48-hour schedule check and fuzzy delay."
           fi
 
       - name: 📥 Checkout repo
