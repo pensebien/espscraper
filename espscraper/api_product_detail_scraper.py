@@ -501,8 +501,31 @@ class ApiProductDetailScraper(BaseScraper):
             "skipped_products": self.skipped_products.copy()
         }
 
+    def get_scraped_ids(self):
+        """Get set of already scraped product IDs from output file"""
+        scraped_ids = set()
+        if os.path.exists(self.OUTPUT_FILE):
+            try:
+                with open(self.OUTPUT_FILE, "r") as f:
+                    for line in f:
+                        try:
+                            data = json.loads(line.strip())
+                            product_id = (
+                                data.get("id")
+                                or data.get("productId") 
+                                or data.get("ProductID")
+                            )
+                            if product_id:
+                                scraped_ids.add(str(product_id))
+                        except json.JSONDecodeError:
+                            continue
+                logging.info(f"📋 Loaded {len(scraped_ids)} already scraped product IDs")
+            except Exception as e:
+                logging.warning(f"⚠️ Error reading scraped IDs: {e}")
+        return scraped_ids
+
     def retry_failed_products(self):
-        """Retry failed products from failed_products_api.txt"""
+        """Retry failed products from failed_products_api.txt with duplicate checking"""
         failed_products_file = os.path.join(os.getcwd(), "failed_products_api.txt")
         
         logging.info(f"🔍 Checking for failed products file: {failed_products_file}")
@@ -523,7 +546,31 @@ class ApiProductDetailScraper(BaseScraper):
                 logging.info("✅ No failed products to retry")
                 return
             
-            logging.info(f"🔄 Retrying {len(failed_ids)} failed products...")
+            # Get already scraped product IDs to avoid duplicates
+            scraped_ids = self.get_scraped_ids()
+            
+            # Filter out already scraped products
+            products_to_retry = []
+            skipped_duplicates = 0
+            
+            for product_id in failed_ids:
+                if product_id in scraped_ids:
+                    skipped_duplicates += 1
+                    logging.info(f"⚠️ Product {product_id} already scraped, skipping retry")
+                else:
+                    products_to_retry.append(product_id)
+            
+            if not products_to_retry:
+                logging.info(f"✅ All {len(failed_ids)} failed products already scraped, nothing to retry")
+                # Remove the failed products file since all are already scraped
+                try:
+                    os.remove(failed_products_file)
+                    logging.info(f"🗑️ Removed {failed_products_file}")
+                except Exception as e:
+                    logging.warning(f"⚠️ Could not remove {failed_products_file}: {e}")
+                return
+            
+            logging.info(f"🔄 Retrying {len(products_to_retry)} failed products (skipped {skipped_duplicates} already scraped)...")
             
             # Reset circuit breaker for retry
             self.circuit_breaker_open = False
@@ -531,7 +578,7 @@ class ApiProductDetailScraper(BaseScraper):
             
             successful_retries = 0
             
-            for product_id in failed_ids:
+            for product_id in products_to_retry:
                 logging.info(f"🔄 Retrying product {product_id}...")
                 
                 # Try to scrape the product again
@@ -548,7 +595,7 @@ class ApiProductDetailScraper(BaseScraper):
                 # Add delay between retries
                 time.sleep(self.config.min_delay)
             
-            logging.info(f"✅ Retry completed: {successful_retries}/{len(failed_ids)} products successfully retried")
+            logging.info(f"✅ Retry completed: {successful_retries}/{len(products_to_retry)} products successfully retried")
             
             # Remove the failed products file after retry
             try:
