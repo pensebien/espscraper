@@ -170,18 +170,37 @@ class SessionManager:
             # Use unique user data directory to avoid conflicts in CI
             import tempfile
             import os
+            import time
 
+            # Create a more unique identifier with timestamp and process ID
+            unique_id = f"{int(time.time())}_{os.getpid()}"
             user_data_dir = os.path.join(
-                tempfile.gettempdir(), f"chrome_user_data_{os.getpid()}"
+                tempfile.gettempdir(), f"chrome_user_data_{unique_id}"
             )
             options.add_argument(f"--user-data-dir={user_data_dir}")
             options.add_argument(
                 "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
-            driver = webdriver.Chrome(
-                service=Service(ChromeDriverManager().install()), options=options
-            )
-            should_quit_driver = True
+            # Add retry mechanism for Chrome driver creation
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    driver = webdriver.Chrome(
+                        service=Service(ChromeDriverManager().install()), options=options
+                    )
+                    should_quit_driver = True
+                    logging.info(f"✅ Chrome driver created successfully on attempt {attempt + 1}")
+                    break
+                except Exception as e:
+                    if "user data directory is already in use" in str(e) and attempt < max_retries - 1:
+                        logging.warning(f"⚠️ Chrome user data directory conflict on attempt {attempt + 1}, retrying...")
+                        time.sleep(2)  # Wait before retry
+                        # Update user data directory for retry
+                        unique_id = f"{int(time.time())}_{os.getpid()}_{attempt}"
+                        user_data_dir = os.path.join(tempfile.gettempdir(), f"chrome_user_data_{unique_id}")
+                        options.add_argument(f"--user-data-dir={user_data_dir}")
+                    else:
+                        raise e
 
         try:
             driver.get(products_url)

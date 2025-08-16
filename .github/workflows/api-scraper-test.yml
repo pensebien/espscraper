@@ -53,6 +53,24 @@ jobs:
           # Kill any existing Chrome processes to avoid conflicts
           sudo pkill -f chrome || true
           sudo pkill -f chromedriver || true
+          sudo pkill -f google-chrome || true
+          
+          # Force kill any remaining Chrome processes
+          sudo pkill -9 -f chrome || true
+          sudo pkill -9 -f chromedriver || true
+
+      - name: 🔍 Verify Chrome installation
+        run: |
+          echo "=== Verifying Chrome installation ==="
+          google-chrome --version || echo "Chrome not found"
+          which google-chrome || echo "Chrome not in PATH"
+          
+          # Test Chrome can start in headless mode
+          timeout 10s google-chrome --headless --no-sandbox --disable-dev-shm-usage --disable-gpu --user-data-dir=/tmp/test_chrome --remote-debugging-port=9222 about:blank || echo "Chrome headless test failed"
+          
+          # Clean up test
+          sudo pkill -f chrome || true
+          sudo rm -rf /tmp/test_chrome || true
 
       - name: Cache pip dependencies
         uses: actions/cache@v4
@@ -85,6 +103,8 @@ jobs:
           # Clean up any existing Chrome user data directories
           sudo rm -rf /tmp/chrome_user_data_* || true
           sudo rm -rf /home/runner/.config/google-chrome || true
+          sudo rm -rf /tmp/.org.chromium.Chromium* || true
+          sudo rm -rf /tmp/.com.google.Chrome* || true
 
       - name: 🚀 Run API scraper test
         run: |
