@@ -17,7 +17,7 @@ from selenium.webdriver.common.keys import Keys
 import argparse
 import urllib.parse
 import random
-from espscraper.selenium_resilient_manager import SeleniumResilientManager
+
 import requests
 import collections
 import logging
@@ -103,6 +103,14 @@ class ProductDetailScraper(BaseScraper):
         options.add_argument("--use-mock-keychain")
         options.add_argument("--memory-pressure-off")
         options.add_argument("--max_old_space_size=2048")
+        # Use unique temporary user data directory to avoid conflicts
+        import tempfile
+        import os
+        import time
+        unique_id = f"{int(time.time())}_{os.getpid()}"
+        user_data_dir = os.path.join(tempfile.gettempdir(), f"chrome_temp_{unique_id}")
+        options.add_argument(f"--user-data-dir={user_data_dir}")
+        options.add_argument("--incognito")
         options.add_argument(
             "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
@@ -131,6 +139,8 @@ class ProductDetailScraper(BaseScraper):
             pass
 
         logging.info("✅ Simple Chrome driver started successfully")
+
+
 
     def setup_selenium(self, driver=None):
         # This method is now only used as a callback if needed for custom setup after driver creation
@@ -171,6 +181,29 @@ class ProductDetailScraper(BaseScraper):
             options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-plugins")
+        options.add_argument("--disable-images")
+        options.add_argument("--disable-javascript")
+        options.add_argument("--disable-background-timer-throttling")
+        options.add_argument("--disable-backgrounding-occluded-windows")
+        options.add_argument("--disable-renderer-backgrounding")
+        options.add_argument("--disable-features=TranslateUI")
+        options.add_argument("--disable-ipc-flooding-protection")
+        # Don't use user data directory in CI to avoid conflicts
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+        options.add_argument("--disable-default-apps")
+        options.add_argument("--disable-sync")
+        # Use unique temporary user data directory to avoid conflicts
+        import tempfile
+        import os
+        import time
+        unique_id = f"{int(time.time())}_{os.getpid()}"
+        user_data_dir = os.path.join(tempfile.gettempdir(), f"chrome_temp_{unique_id}")
+        options.add_argument(f"--user-data-dir={user_data_dir}")
+        options.add_argument("--incognito")
         options.add_argument(
             "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
@@ -228,6 +261,15 @@ class ProductDetailScraper(BaseScraper):
         finally:
             driver.quit()
             logging.info("🤖 Selenium browser closed.")
+            # Clean up temporary user data directory
+            try:
+                import shutil
+                if 'user_data_dir' in locals():
+                    shutil.rmtree(user_data_dir, ignore_errors=True)
+                    logging.info(f"🧹 Cleaned up temporary Chrome user data directory: {user_data_dir}")
+            except Exception as e:
+                logging.warning(f"⚠️ Failed to clean up Chrome user data directory: {e}")
+
 
     def _load_cookies_into_driver(self, cookies):
         """Load cookies into the current driver and validate session"""
@@ -2393,8 +2435,53 @@ class ProductDetailScraper(BaseScraper):
                 return False
         return False
 
+    def cleanup(self):
+        """Clean up Chrome driver and temporary user data directories"""
+        try:
+            if self.driver:
+                self.driver.quit()
+                logging.info("🤖 Chrome driver closed.")
+                self.driver = None
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to close Chrome driver: {e}")
+
+        # Clean up any temporary Chrome user data directories
+        try:
+            import shutil
+            import tempfile
+            import glob
+            import os
+            
+            # Clean up chrome_temp_* directories
+            temp_dir = tempfile.gettempdir()
+            chrome_temp_pattern = os.path.join(temp_dir, "chrome_temp_*")
+            for chrome_dir in glob.glob(chrome_temp_pattern):
+                try:
+                    shutil.rmtree(chrome_dir, ignore_errors=True)
+                    logging.info(f"🧹 Cleaned up Chrome user data directory: {chrome_dir}")
+                except Exception as e:
+                    logging.warning(f"⚠️ Failed to clean up Chrome directory {chrome_dir}: {e}")
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to clean up Chrome user data directories: {e}")
+
+    def __del__(self):
+        """Destructor to ensure cleanup"""
+        self.cleanup()
+
 
 def main():
+    import signal
+    
+    def signal_handler(signum, frame):
+        logging.info(f"🛑 Received signal {signum}, cleaning up...")
+        if 'scraper' in locals():
+            scraper.cleanup()
+        exit(0)
+    
+    # Set up signal handlers for graceful cleanup
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     parser = argparse.ArgumentParser(description="Scrape product data from ESP Web.")
     parser.add_argument(
         "--limit",
@@ -2488,7 +2575,11 @@ def main():
         logging.info(
             f"🔢 Processing batch {args.batch_number} (products {start} to {end-1})"
         )
-    scraper.scrape_all_details(force_relogin=args.force_relogin)
+    
+    try:
+        scraper.scrape_all_details(force_relogin=args.force_relogin)
+    finally:
+        scraper.cleanup()
 
 
 if __name__ == "__main__":

@@ -157,6 +157,30 @@ class SessionManager:
                 options.add_argument("--headless=new")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-plugins")
+            options.add_argument("--disable-images")
+            options.add_argument("--disable-javascript")
+            options.add_argument("--disable-background-timer-throttling")
+            options.add_argument("--disable-backgrounding-occluded-windows")
+            options.add_argument("--disable-renderer-backgrounding")
+            options.add_argument("--disable-features=TranslateUI")
+            options.add_argument("--disable-ipc-flooding-protection")
+            # Don't use user data directory in CI to avoid conflicts
+            options.add_argument("--no-first-run")
+            options.add_argument("--no-default-browser-check")
+            options.add_argument("--disable-default-apps")
+            options.add_argument("--disable-sync")
+            # Use unique temporary user data directory to avoid conflicts
+            import tempfile
+            import os
+            import time
+            unique_id = f"{int(time.time())}_{os.getpid()}"
+            user_data_dir = os.path.join(tempfile.gettempdir(), f"chrome_temp_{unique_id}")
+            options.add_argument(f"--user-data-dir={user_data_dir}")
+            options.add_argument("--incognito")
+
             options.add_argument(
                 "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
@@ -211,25 +235,15 @@ class SessionManager:
             if should_quit_driver:
                 driver.quit()
                 logging.info("🤖 Selenium browser closed.")
+                # Clean up temporary user data directory
+                try:
+                    import shutil
+                    if 'user_data_dir' in locals():
+                        shutil.rmtree(user_data_dir, ignore_errors=True)
+                        logging.info(f"🧹 Cleaned up temporary Chrome user data directory: {user_data_dir}")
+                except Exception as e:
+                    logging.warning(f"⚠️ Failed to clean up Chrome user data directory: {e}")
 
-    def login(self):
-        """Simple login method for testing"""
-        try:
-            username = os.getenv("ESP_USERNAME")
-            password = os.getenv("ESP_PASSWORD")
-            products_url = os.getenv("PRODUCTS_URL")
-
-            if not all([username, password, products_url]):
-                logging.warning("❌ Missing environment variables")
-                return False
-
-            page_key, search_id = self.selenium_login_and_get_session_data(
-                username, password, products_url
-            )
-            return page_key is not None and search_id is not None
-        except Exception as e:
-            logging.exception(f"❌ Login failed: {e}")
-            return False
 
     def quit(self):
         """Clean up method"""

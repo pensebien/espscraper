@@ -2,7 +2,7 @@ name: API Scraper (Batch Processing)
 
 on:
   schedule:
-    - cron: '0 2,3,4 * * *'
+    - cron: '0 2,3,4 * * *'  # Run at 2 AM, 3 AM, or 4 AM every day (fuzzy timing)
   workflow_dispatch:
     inputs:
       batch_size:
@@ -34,38 +34,55 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 💤 Fuzzy start (random delay and every-2-day check)
+      - name: 💤 Fuzzy start (48-hour schedule with random timing)
         run: |
           if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
-            # Only run every 2 days (even days since epoch)
-            if [ $(( $(date +%s) / 86400 % 2 )) -ne 0 ]; then
-              echo "Not a scheduled run day, exiting."
+            # Calculate days since epoch and check if it's an even day (every 48 hours)
+            DAYS_SINCE_EPOCH=$(( $(date +%s) / 86400 ))
+            if [ $(( DAYS_SINCE_EPOCH % 2 )) -ne 0 ]; then
+              echo "Not a 48-hour scheduled run day (day $DAYS_SINCE_EPOCH), exiting."
               exit 0
             fi
-            # Sleep for a random time between 0 and 60 minutes
-            SLEEP_MINUTES=$(( RANDOM % 61 ))
-            echo "Sleeping for $SLEEP_MINUTES minutes to add fuzziness..."
+            
+            # Add fuzzy timing: random delay between 0 and 120 minutes (0-2 hours)
+            # This spreads the execution time across 2-6 AM window
+            SLEEP_MINUTES=$(( RANDOM % 121 ))
+            echo "48-hour schedule triggered (day $DAYS_SINCE_EPOCH)."
+            echo "Fuzzy timing: Sleeping for $SLEEP_MINUTES minutes (execution window: 2-6 AM)..."
             sleep $(( SLEEP_MINUTES * 60 ))
+            
+            # Log the actual execution time
+            EXECUTION_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+            echo "✅ Starting execution at: $EXECUTION_TIME"
           else
-            echo "Manual run detected, skipping fuzzy delay."
+            echo "Manual run detected, skipping 48-hour schedule check and fuzzy delay."
           fi
 
       - name: 📥 Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🐍 Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
       - name: 🔧 Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget unzip
+          sudo apt-get install -y wget unzip xvfb
           wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
           sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
+
+          # Kill any existing Chrome processes to avoid conflicts
+          sudo pkill -f chrome || true
+          sudo pkill -f chromedriver || true
+          sudo pkill -f google-chrome || true
+          sudo pkill -9 -f chrome || true
+          sudo pkill -9 -f chromedriver || true
+          sudo pkill -9 -f google-chrome || true
+          sleep 2
 
       - name: Cache pip dependencies
         uses: actions/cache@v4
@@ -106,6 +123,25 @@ jobs:
           mkdir -p batch
           mkdir -p tmp
           mkdir -p logs
+
+          # Clean up any existing Chrome user data directories
+          sudo rm -rf /tmp/chrome_user_data_* || true
+          sudo rm -rf /tmp/chrome_temp_* || true
+          sudo rm -rf /home/runner/.config/google-chrome || true
+          sudo rm -rf /tmp/.org.chromium.Chromium* || true
+          sudo rm -rf /tmp/.com.google.Chrome* || true
+
+      - name: 🖥️ Setup virtual display and verify Chrome
+        run: |
+          # Start virtual display
+          Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+          export DISPLAY=:99
+          
+          # Verify Chrome installation and test headless mode
+          google-chrome --version
+          google-chrome --headless --disable-gpu --no-sandbox --disable-dev-shm-usage --remote-debugging-port=9222 &
+          sleep 3
+          pkill -f google-chrome || true
 
       - name: 🔍 Check existing data
         run: |
@@ -212,6 +248,9 @@ jobs:
           PRODUCT_URL_TEMPLATE: ${{ secrets.PRODUCT_URL_TEMPLATE }}
           API_SCRAPED_LINKS_FILE: espscraper/data/api_scraped_links.jsonl
           PRODUCT_OUTPUT_FILE: espscraper/data/final_product_details.jsonl
+          CHROME_HEADLESS: 1
+          CHROME_NO_SANDBOX: 1
+          DISPLAY: :99
 
       - name: 📊 Generate batch statistics
         run: |
@@ -240,7 +279,7 @@ jobs:
           fi
 
       - name: 📦 Checkout artifacts branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: artifacts
           path: artifacts-branch
