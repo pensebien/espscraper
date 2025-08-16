@@ -61,7 +61,7 @@ jobs:
       - name: 🔧 Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget unzip
+          sudo apt-get install -y wget unzip xvfb
           wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
           sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
           sudo apt-get update
@@ -70,6 +70,11 @@ jobs:
           # Kill any existing Chrome processes to avoid conflicts
           sudo pkill -f chrome || true
           sudo pkill -f chromedriver || true
+          sudo pkill -f google-chrome || true
+          sudo pkill -9 -f chrome || true
+          sudo pkill -9 -f chromedriver || true
+          sudo pkill -9 -f google-chrome || true
+          sleep 2
 
       - name: Cache pip dependencies
         uses: actions/cache@v4
@@ -113,7 +118,22 @@ jobs:
 
           # Clean up any existing Chrome user data directories
           sudo rm -rf /tmp/chrome_user_data_* || true
+          sudo rm -rf /tmp/chrome_temp_* || true
           sudo rm -rf /home/runner/.config/google-chrome || true
+          sudo rm -rf /tmp/.org.chromium.Chromium* || true
+          sudo rm -rf /tmp/.com.google.Chrome* || true
+
+      - name: 🖥️ Setup virtual display and verify Chrome
+        run: |
+          # Start virtual display
+          Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+          export DISPLAY=:99
+          
+          # Verify Chrome installation and test headless mode
+          google-chrome --version
+          google-chrome --headless --disable-gpu --no-sandbox --disable-dev-shm-usage --remote-debugging-port=9222 &
+          sleep 3
+          pkill -f google-chrome || true
 
       - name: 🔍 Check existing data
         run: |
@@ -220,6 +240,9 @@ jobs:
           PRODUCT_URL_TEMPLATE: ${{ secrets.PRODUCT_URL_TEMPLATE }}
           API_SCRAPED_LINKS_FILE: espscraper/data/api_scraped_links.jsonl
           PRODUCT_OUTPUT_FILE: espscraper/data/final_product_details.jsonl
+          CHROME_HEADLESS: 1
+          CHROME_NO_SANDBOX: 1
+          DISPLAY: :99
 
       - name: 📊 Generate batch statistics
         run: |

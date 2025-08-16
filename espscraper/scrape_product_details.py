@@ -103,6 +103,14 @@ class ProductDetailScraper(BaseScraper):
         options.add_argument("--use-mock-keychain")
         options.add_argument("--memory-pressure-off")
         options.add_argument("--max_old_space_size=2048")
+        # Use unique temporary user data directory to avoid conflicts
+        import tempfile
+        import os
+        import time
+        unique_id = f"{int(time.time())}_{os.getpid()}"
+        user_data_dir = os.path.join(tempfile.gettempdir(), f"chrome_temp_{unique_id}")
+        options.add_argument(f"--user-data-dir={user_data_dir}")
+        options.add_argument("--incognito")
         options.add_argument(
             "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
@@ -2427,8 +2435,53 @@ class ProductDetailScraper(BaseScraper):
                 return False
         return False
 
+    def cleanup(self):
+        """Clean up Chrome driver and temporary user data directories"""
+        try:
+            if self.driver:
+                self.driver.quit()
+                logging.info("🤖 Chrome driver closed.")
+                self.driver = None
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to close Chrome driver: {e}")
+
+        # Clean up any temporary Chrome user data directories
+        try:
+            import shutil
+            import tempfile
+            import glob
+            import os
+            
+            # Clean up chrome_temp_* directories
+            temp_dir = tempfile.gettempdir()
+            chrome_temp_pattern = os.path.join(temp_dir, "chrome_temp_*")
+            for chrome_dir in glob.glob(chrome_temp_pattern):
+                try:
+                    shutil.rmtree(chrome_dir, ignore_errors=True)
+                    logging.info(f"🧹 Cleaned up Chrome user data directory: {chrome_dir}")
+                except Exception as e:
+                    logging.warning(f"⚠️ Failed to clean up Chrome directory {chrome_dir}: {e}")
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to clean up Chrome user data directories: {e}")
+
+    def __del__(self):
+        """Destructor to ensure cleanup"""
+        self.cleanup()
+
 
 def main():
+    import signal
+    
+    def signal_handler(signum, frame):
+        logging.info(f"🛑 Received signal {signum}, cleaning up...")
+        if 'scraper' in locals():
+            scraper.cleanup()
+        exit(0)
+    
+    # Set up signal handlers for graceful cleanup
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     parser = argparse.ArgumentParser(description="Scrape product data from ESP Web.")
     parser.add_argument(
         "--limit",
@@ -2522,7 +2575,11 @@ def main():
         logging.info(
             f"🔢 Processing batch {args.batch_number} (products {start} to {end-1})"
         )
-    scraper.scrape_all_details(force_relogin=args.force_relogin)
+    
+    try:
+        scraper.scrape_all_details(force_relogin=args.force_relogin)
+    finally:
+        scraper.cleanup()
 
 
 if __name__ == "__main__":
