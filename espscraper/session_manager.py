@@ -167,40 +167,19 @@ class SessionManager:
             options.add_argument("--disable-renderer-backgrounding")
             options.add_argument("--disable-features=TranslateUI")
             options.add_argument("--disable-ipc-flooding-protection")
-            # Use unique user data directory to avoid conflicts in CI
-            import tempfile
-            import os
-            import time
+            # Don't use user data directory in CI to avoid conflicts
+            options.add_argument("--no-first-run")
+            options.add_argument("--no-default-browser-check")
+            options.add_argument("--disable-default-apps")
+            options.add_argument("--disable-sync")
 
-            # Create a more unique identifier with timestamp and process ID
-            unique_id = f"{int(time.time())}_{os.getpid()}"
-            user_data_dir = os.path.join(
-                tempfile.gettempdir(), f"chrome_user_data_{unique_id}"
-            )
-            options.add_argument(f"--user-data-dir={user_data_dir}")
             options.add_argument(
                 "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
-            # Add retry mechanism for Chrome driver creation
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    driver = webdriver.Chrome(
-                        service=Service(ChromeDriverManager().install()), options=options
-                    )
-                    should_quit_driver = True
-                    logging.info(f"✅ Chrome driver created successfully on attempt {attempt + 1}")
-                    break
-                except Exception as e:
-                    if "user data directory is already in use" in str(e) and attempt < max_retries - 1:
-                        logging.warning(f"⚠️ Chrome user data directory conflict on attempt {attempt + 1}, retrying...")
-                        time.sleep(2)  # Wait before retry
-                        # Update user data directory for retry
-                        unique_id = f"{int(time.time())}_{os.getpid()}_{attempt}"
-                        user_data_dir = os.path.join(tempfile.gettempdir(), f"chrome_user_data_{unique_id}")
-                        options.add_argument(f"--user-data-dir={user_data_dir}")
-                    else:
-                        raise e
+            driver = webdriver.Chrome(
+                service=Service(ChromeDriverManager().install()), options=options
+            )
+            should_quit_driver = True
 
         try:
             driver.get(products_url)
@@ -248,19 +227,7 @@ class SessionManager:
             if should_quit_driver:
                 driver.quit()
                 logging.info("🤖 Selenium browser closed.")
-                # Clean up temporary user data directory
-                try:
-                    import shutil
 
-                    if "user_data_dir" in locals():
-                        shutil.rmtree(user_data_dir, ignore_errors=True)
-                        logging.info(
-                            f"🧹 Cleaned up temporary Chrome user data directory: {user_data_dir}"
-                        )
-                except Exception as e:
-                    logging.warning(
-                        f"⚠️ Failed to clean up Chrome user data directory: {e}"
-                    )
 
     def login(self):
         """Simple login method for testing"""

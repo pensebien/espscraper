@@ -112,37 +112,8 @@ class ProductDetailScraper(BaseScraper):
         if not self.headless:
             options.add_argument("--start-maximized")
 
-        # Use unique user data directory to avoid conflicts in CI
-        import tempfile
-        import os
-        import time
-        
-        # Create a more unique identifier with timestamp and process ID
-        unique_id = f"{int(time.time())}_{os.getpid()}"
-        user_data_dir = os.path.join(
-            tempfile.gettempdir(), f"chrome_user_data_{unique_id}"
-        )
-        options.add_argument(f"--user-data-dir={user_data_dir}")
-
         service = Service(ChromeDriverManager().install())
-        
-        # Add retry mechanism for Chrome driver creation
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                self.driver = webdriver.Chrome(service=service, options=options)
-                logging.info(f"✅ Chrome driver created successfully on attempt {attempt + 1}")
-                break
-            except Exception as e:
-                if "user data directory is already in use" in str(e) and attempt < max_retries - 1:
-                    logging.warning(f"⚠️ Chrome user data directory conflict on attempt {attempt + 1}, retrying...")
-                    time.sleep(2)  # Wait before retry
-                    # Update user data directory for retry
-                    unique_id = f"{int(time.time())}_{os.getpid()}_{attempt}"
-                    user_data_dir = os.path.join(tempfile.gettempdir(), f"chrome_user_data_{unique_id}")
-                    options.add_argument(f"--user-data-dir={user_data_dir}")
-                else:
-                    raise e
+        self.driver = webdriver.Chrome(service=service, options=options)
         self.driver.set_page_load_timeout(30)  # Increased from 15 to 30 seconds
         self.driver.implicitly_wait(10)  # Increased from 5 to 10 seconds
 
@@ -161,40 +132,7 @@ class ProductDetailScraper(BaseScraper):
 
         logging.info("✅ Simple Chrome driver started successfully")
 
-    def cleanup(self):
-        """Clean up resources including temporary Chrome user data directories"""
-        try:
-            if hasattr(self, "driver") and self.driver:
-                self.driver.quit()
-                logging.info("🤖 Chrome driver closed during cleanup")
 
-            # Clean up any temporary user data directories
-            import tempfile
-            import os
-            import shutil
-            import glob
-
-            temp_dir = tempfile.gettempdir()
-            chrome_pattern = os.path.join(temp_dir, "chrome_user_data_*")
-            chrome_dirs = glob.glob(chrome_pattern)
-
-            for chrome_dir in chrome_dirs:
-                try:
-                    shutil.rmtree(chrome_dir, ignore_errors=True)
-                    logging.info(
-                        f"🧹 Cleaned up Chrome user data directory: {chrome_dir}"
-                    )
-                except Exception as e:
-                    logging.warning(
-                        f"⚠️ Failed to clean up Chrome directory {chrome_dir}: {e}"
-                    )
-
-        except Exception as e:
-            logging.warning(f"⚠️ Error during cleanup: {e}")
-
-    def __del__(self):
-        """Destructor to ensure cleanup"""
-        self.cleanup()
 
     def setup_selenium(self, driver=None):
         # This method is now only used as a callback if needed for custom setup after driver creation
@@ -245,39 +183,17 @@ class ProductDetailScraper(BaseScraper):
         options.add_argument("--disable-renderer-backgrounding")
         options.add_argument("--disable-features=TranslateUI")
         options.add_argument("--disable-ipc-flooding-protection")
-        # Use unique user data directory to avoid conflicts in CI
-        import tempfile
-        import os
-        import time
-        
-        # Create a more unique identifier with timestamp and process ID
-        unique_id = f"{int(time.time())}_{os.getpid()}"
-        user_data_dir = os.path.join(
-            tempfile.gettempdir(), f"chrome_user_data_{unique_id}"
-        )
-        options.add_argument(f"--user-data-dir={user_data_dir}")
+        # Don't use user data directory in CI to avoid conflicts
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+        options.add_argument("--disable-default-apps")
+        options.add_argument("--disable-sync")
         options.add_argument(
             "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
-        # Add retry mechanism for Chrome driver creation
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                driver = webdriver.Chrome(
-                    service=Service(ChromeDriverManager().install()), options=options
-                )
-                logging.info(f"✅ Chrome driver created successfully on attempt {attempt + 1}")
-                break
-            except Exception as e:
-                if "user data directory is already in use" in str(e) and attempt < max_retries - 1:
-                    logging.warning(f"⚠️ Chrome user data directory conflict on attempt {attempt + 1}, retrying...")
-                    time.sleep(2)  # Wait before retry
-                    # Update user data directory for retry
-                    unique_id = f"{int(time.time())}_{os.getpid()}_{attempt}"
-                    user_data_dir = os.path.join(tempfile.gettempdir(), f"chrome_user_data_{unique_id}")
-                    options.add_argument(f"--user-data-dir={user_data_dir}")
-                else:
-                    raise e
+        driver = webdriver.Chrome(
+            service=Service(ChromeDriverManager().install()), options=options
+        )
         try:
             driver.get(self.PRODUCTS_URL)
             time.sleep(3)
@@ -329,17 +245,7 @@ class ProductDetailScraper(BaseScraper):
         finally:
             driver.quit()
             logging.info("🤖 Selenium browser closed.")
-            # Clean up temporary user data directory
-            try:
-                import shutil
 
-                if "user_data_dir" in locals():
-                    shutil.rmtree(user_data_dir, ignore_errors=True)
-                    logging.info(
-                        f"🧹 Cleaned up temporary Chrome user data directory: {user_data_dir}"
-                    )
-            except Exception as e:
-                logging.warning(f"⚠️ Failed to clean up Chrome user data directory: {e}")
 
     def _load_cookies_into_driver(self, cookies):
         """Load cookies into the current driver and validate session"""
@@ -2507,18 +2413,6 @@ class ProductDetailScraper(BaseScraper):
 
 
 def main():
-    # Set up signal handlers for graceful cleanup
-    import signal
-
-    def signal_handler(signum, frame):
-        logging.info(f"🛑 Received signal {signum}, cleaning up...")
-        if "scraper" in locals():
-            scraper.cleanup()
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
     parser = argparse.ArgumentParser(description="Scrape product data from ESP Web.")
     parser.add_argument(
         "--limit",
@@ -2612,10 +2506,7 @@ def main():
         logging.info(
             f"🔢 Processing batch {args.batch_number} (products {start} to {end-1})"
         )
-    try:
-        scraper.scrape_all_details(force_relogin=args.force_relogin)
-    finally:
-        scraper.cleanup()
+    scraper.scrape_all_details(force_relogin=args.force_relogin)
 
 
 if __name__ == "__main__":

@@ -65,8 +65,8 @@ jobs:
           google-chrome --version || echo "Chrome not found"
           which google-chrome || echo "Chrome not in PATH"
           
-          # Test Chrome can start in headless mode
-          timeout 10s google-chrome --headless --no-sandbox --disable-dev-shm-usage --disable-gpu --user-data-dir=/tmp/test_chrome --remote-debugging-port=9222 about:blank || echo "Chrome headless test failed"
+          # Test Chrome can start in headless mode without user data directory
+          timeout 10s google-chrome --headless --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --no-default-browser-check --disable-default-apps --disable-sync --remote-debugging-port=9222 about:blank || echo "Chrome headless test failed"
           
           # Clean up test
           sudo pkill -f chrome || true
@@ -105,6 +105,10 @@ jobs:
           sudo rm -rf /home/runner/.config/google-chrome || true
           sudo rm -rf /tmp/.org.chromium.Chromium* || true
           sudo rm -rf /tmp/.com.google.Chrome* || true
+          
+          # Set environment variables to prevent Chrome from using user data directories
+          export CHROME_HEADLESS=1
+          export CHROME_NO_SANDBOX=1
 
       - name: 🚀 Run API scraper test
         run: |
