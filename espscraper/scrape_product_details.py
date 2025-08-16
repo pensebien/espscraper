@@ -17,7 +17,7 @@ from selenium.webdriver.common.keys import Keys
 import argparse
 import urllib.parse
 import random
-from espscraper.selenium_resilient_manager import SeleniumResilientManager
+# from espscraper.selenium_resilient_manager import SeleniumResilientManager  # Not needed for Chrome fixes
 import requests
 import collections
 import logging
