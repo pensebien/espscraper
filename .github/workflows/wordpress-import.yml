@@ -244,31 +244,30 @@ jobs:
           echo "Fetching API parameters from WordPress..."
           
           # Build curl command with optional basic auth
-          CURL_CMD="curl -s -w \"\\n%{http_code}\""
-          
-          # Add basic auth if credentials are provided
           if [ -n "${{ secrets.WP_BASIC_AUTH_USER }}" ] && [ -n "${{ secrets.WP_BASIC_AUTH_PASS }}" ]; then
-            CURL_CMD="$CURL_CMD -u \"${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}\""
             echo "Using Basic Auth: ${{ secrets.WP_BASIC_AUTH_USER }}"
+            echo "Basic Auth configured: YES"
+            response=$(curl -s -w "\n%{http_code}" -u "${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}" \
+              "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.GITHUB_PARAMS_SECRET }}")
           else
             echo "No Basic Auth configured"
+            echo "WP_BASIC_AUTH_USER: '${{ secrets.WP_BASIC_AUTH_USER }}'"
+            echo "WP_BASIC_AUTH_PASS: '${{ secrets.WP_BASIC_AUTH_PASS }}'"
+            response=$(curl -s -w "\n%{http_code}" \
+              "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.GITHUB_PARAMS_SECRET }}")
           fi
           
-          # Use the correct secret name that matches the plugin (as query parameter)
-          response=$($CURL_CMD \
-            "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.GITHUB_PARAMS_SECRET }}")
-          
-          # Extract status code and body
-          http_code=$(echo "$response" | tail -n1)
-          body=$(echo "$response" | head -n -1)
+          # Extract status code and body (handle newlines properly)
+          http_code=$(echo "$response" | tail -n1 | tr -d '\n\r"')
+          body=$(echo "$response" | sed '$d')
           
           echo "HTTP Status: $http_code"
           echo "Response: $body"
           
           if [ "$http_code" -eq 200 ]; then
-            # Parse JSON response using jq
-            api_url=$(echo "$body" | jq -r '.api_url // empty')
-            api_key=$(echo "$body" | jq -r '.api_key // empty')
+            # Parse JSON response using jq (handle potential parsing issues)
+            api_url=$(echo "$body" | jq -r '.api_url // empty' 2>/dev/null || echo "")
+            api_key=$(echo "$body" | jq -r '.api_key // empty' 2>/dev/null || echo "")
             
             if [ -n "$api_url" ] && [ -n "$api_key" ]; then
               echo "api_url=$api_url" >> $GITHUB_OUTPUT
@@ -276,6 +275,7 @@ jobs:
               echo "✅ Successfully fetched API parameters"
             else
               echo "❌ Missing api_url or api_key in response"
+              echo "Body content: $body"
               exit 1
             fi
           else
