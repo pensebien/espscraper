@@ -242,7 +242,7 @@ jobs:
         id: get_params
         run: |
           # Try to fetch from WordPress, but don't fail if it doesn't work
-          curl -s -u "${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}" "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.GITHUB_PARAMS_SECRET }}" > params.json || echo '{"api_url": "", "api_key": ""}' > params.json
+          curl -s -u "${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}" "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}" > params.json || echo '{"api_url": "", "api_key": ""}' > params.json
           
           # Use WordPress values if available, otherwise use input parameters
           WP_API_URL_FROM_WP=$(jq -r .api_url params.json)
