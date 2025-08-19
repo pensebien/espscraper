@@ -112,8 +112,12 @@ def import_product_to_wp(
             "WordPress API URL is required but not provided or is empty/null"
         )
 
-    # Use the provided upload URL directly
-    import_url = wp_api_url
+    # Use the import-product endpoint
+    if wp_api_url.endswith("/upload"):
+        import_url = wp_api_url.replace("/upload", "/import-product")
+    else:
+        import_url = wp_api_url.rstrip("/") + "/import-product"
+
     headers = {"Content-Type": "application/json", "X-API-Key": wp_api_key}
     auth = (
         (basic_auth_user, basic_auth_pass)
@@ -167,6 +171,12 @@ def main():
     )
     parser.add_argument(
         "--wp-basic-auth-pass", default=os.getenv("WP_BASIC_AUTH_PASS"), required=True
+    )
+    parser.add_argument(
+        "--use-enhanced-files",
+        action="store_true",
+        default=os.getenv("USE_ENHANCED_FILES", "false").lower() == "true",
+        help="Use enhanced files instead of batch files",
     )
     args = parser.parse_args()
 
@@ -287,17 +297,33 @@ def main():
         args.mode,
     )
 
-    # Iterate batches and lines, resuming as needed
-    batch_files = [
+    # Determine which directory and file pattern to use
+    if args.use_enhanced_files:
+        import_dir = "enhanced"
+        file_pattern = "*_enhanced.jsonl"
+        print("📁 Using enhanced files for import")
+    else:
+        import_dir = bp.batch_dir
+        file_pattern = f"{bp.batch_prefix}*.jsonl"
+        print("📁 Using batch files for import")
+
+    # Iterate files and lines, resuming as needed
+    import_files = [
         f
-        for f in sorted(os.listdir(bp.batch_dir))
-        if f.startswith(bp.batch_prefix) and f.endswith(".jsonl")
+        for f in sorted(os.listdir(import_dir))
+        if f.endswith(".jsonl")
+        and (
+            args.use_enhanced_files
+            and "_enhanced.jsonl" in f
+            or not args.use_enhanced_files
+            and f.startswith(bp.batch_prefix)
+        )
     ]
 
-    print(f"📁 Found {len(batch_files)} batch files to process")
+    print(f"📁 Found {len(import_files)} files to process")
 
-    for batch_file in batch_files:
-        batch_path = os.path.join(bp.batch_dir, batch_file)
+    for batch_file in import_files:
+        batch_path = os.path.join(import_dir, batch_file)
         skip_lines = batch_line_map.get(batch_file, 0)
 
         print(f"📄 Processing batch file: {batch_file}")
