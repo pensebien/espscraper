@@ -20,3 +20,10 @@ gh secret set PRODUCT_URL_TEMPLATE --body "https://espweb.asicentral.com/Default
 
 echo "✅ All GitHub secrets have been set!"
 echo "⚠️  Remember to replace 'your_esp_username' and 'your_esp_password' with your actual credentials"
+
+
+gh secret set WP_API_SECRET --body "QwErTy1234567890zxcvbnmASDFGHJKLqwertyuiop"
+
+# WordPress Basic Auth credentials (for LocalWP)
+gh secret set WP_BASIC_AUTH_USER --body "nonfiction"
+gh secret set WP_BASIC_AUTH_PASS --body "cautious"
