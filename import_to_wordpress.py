@@ -84,7 +84,10 @@ def fetch_existing_products(
     headers = {"X-API-Key": wp_api_key}
     auth = (
         (basic_auth_user, basic_auth_pass)
-        if basic_auth_user and basic_auth_pass
+        if basic_auth_user
+        and basic_auth_pass
+        and basic_auth_user.strip()
+        and basic_auth_pass.strip()
         else None
     )
     try:
@@ -112,34 +115,50 @@ def import_product_to_wp(
             "WordPress API URL is required but not provided or is empty/null"
         )
 
-    # Use the provided upload URL directly
-    import_url = wp_api_url
-    headers = {"Content-Type": "application/json", "X-API-Key": wp_api_key}
-    auth = (
-        (basic_auth_user, basic_auth_pass)
-        if basic_auth_user and basic_auth_pass
-        else None
-    )
-    try:
-        resp = requests.post(
-            import_url,
-            headers=headers,
-            json=product,  # Send as JSON, not as file
-            auth=auth,
-            timeout=60,
+    # Use the /import-product endpoint for individual product imports
+    if wp_api_url.endswith("/upload"):
+        import_url = wp_api_url.replace("/upload", "/import-product")
+    elif wp_api_url.endswith("/import-product"):
+        import_url = wp_api_url
+    else:
+        # Extract base URL and construct import endpoint
+        base_url = wp_api_url.replace("/wp-json/promostandards-importer/v1/upload", "")
+        import_url = (
+            base_url.rstrip("/") + "/wp-json/promostandards-importer/v1/import-product"
         )
-        if resp.status_code == 200:
-            result = resp.json()
-            if result.get("success"):
-                return True, result
-            else:
-                return False, result.get("message", "Import failed")
-        else:
-            logging.warning(f"Failed to import product: {resp.status_code} {resp.text}")
-            return False, resp.text
-    except Exception as e:
-        logging.warning(f"Exception importing product: {e}")
-        return False, str(e)
+
+    # Prepare headers
+    headers = {
+        "X-API-Key": wp_api_key,
+        "Content-Type": "application/json",
+    }
+
+    # Add basic auth if provided
+    if (
+        basic_auth_user
+        and basic_auth_pass
+        and basic_auth_user.strip()
+        and basic_auth_pass.strip()
+    ):
+        import base64
+
+        auth_string = f"{basic_auth_user}:{basic_auth_pass}"
+        auth_bytes = auth_string.encode("ascii")
+        auth_b64 = base64.b64encode(auth_bytes).decode("ascii")
+        headers["Authorization"] = f"Basic {auth_b64}"
+
+    try:
+        # Send product data as JSON body to /import-product endpoint
+        response = requests.post(
+            import_url,
+            json=product,
+            headers=headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"Failed to import product: {str(e)}")
 
 
 def main():
@@ -160,15 +179,24 @@ def main():
         default=int(os.getenv("PRODUCT_LIMIT", "100")),
         help="Total number of products to import",
     )
+    parser.add_argument(
+        "--use-enhanced-files",
+        default=os.getenv("USE_ENHANCED_FILES", "true"),
+        choices=["true", "false"],
+        help="Use enhanced files (with FPD config) instead of regular batch files",
+    )
     parser.add_argument("--wp-api-url", default=os.getenv("WP_API_URL"), required=True)
     parser.add_argument("--wp-api-key", default=os.getenv("WP_API_KEY"), required=True)
     parser.add_argument(
-        "--wp-basic-auth-user", default=os.getenv("WP_BASIC_AUTH_USER"), required=True
+        "--wp-basic-auth-user", default=os.getenv("WP_BASIC_AUTH_USER"), required=False
     )
     parser.add_argument(
-        "--wp-basic-auth-pass", default=os.getenv("WP_BASIC_AUTH_PASS"), required=True
+        "--wp-basic-auth-pass", default=os.getenv("WP_BASIC_AUTH_PASS"), required=False
     )
     args = parser.parse_args()
+
+    # Convert string to boolean
+    use_enhanced_files = args.use_enhanced_files.lower() == "true"
 
     # Validate required arguments
     if (
@@ -197,29 +225,30 @@ def main():
         )
         sys.exit(1)
 
-    if (
-        not args.wp_basic_auth_user
-        or args.wp_basic_auth_user == "null"
-        or args.wp_basic_auth_user.strip() == ""
-    ):
-        print(
-            "❌ Error: WordPress Basic Auth username is required but not provided or is empty/null"
-        )
-        print(
-            "   Please provide --wp-basic-auth-user parameter or set WP_BASIC_AUTH_USER environment variable"
-        )
-        sys.exit(1)
-
-    if (
+    # Basic auth is optional - only validate if provided
+    if args.wp_basic_auth_user and (
         not args.wp_basic_auth_pass
         or args.wp_basic_auth_pass == "null"
         or args.wp_basic_auth_pass.strip() == ""
     ):
         print(
-            "❌ Error: WordPress Basic Auth password is required but not provided or is empty/null"
+            "❌ Error: WordPress Basic Auth password is required when username is provided"
         )
         print(
             "   Please provide --wp-basic-auth-pass parameter or set WP_BASIC_AUTH_PASS environment variable"
+        )
+        sys.exit(1)
+
+    if args.wp_basic_auth_pass and (
+        not args.wp_basic_auth_user
+        or args.wp_basic_auth_user == "null"
+        or args.wp_basic_auth_user.strip() == ""
+    ):
+        print(
+            "❌ Error: WordPress Basic Auth username is required when password is provided"
+        )
+        print(
+            "   Please provide --wp-basic-auth-user parameter or set WP_BASIC_AUTH_USER environment variable"
         )
         sys.exit(1)
 
@@ -227,7 +256,7 @@ def main():
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     print(
-        f"\n🚀 Starting WordPress import: mode={args.mode}, product_limit={args.product_limit}"
+        f"\n🚀 Starting WordPress import: mode={args.mode}, product_limit={args.product_limit}, use_enhanced_files={use_enhanced_files}"
     )
 
     # Initialize heartbeat
@@ -287,20 +316,49 @@ def main():
         args.mode,
     )
 
+    # Determine source directory based on enhanced files preference
+    if use_enhanced_files:
+        source_dir = "enhanced"
+        file_pattern = "*_enhanced.jsonl"
+        print(f"📁 Using enhanced files from {source_dir}/ directory")
+    else:
+        source_dir = bp.batch_dir
+        file_pattern = f"{bp.batch_prefix}*.jsonl"
+        print(f"📁 Using regular batch files from {source_dir}/ directory")
+
+    # Check if source directory exists
+    if not os.path.exists(source_dir):
+        print(f"❌ Error: Source directory '{source_dir}' does not exist")
+        print(
+            f"   Available directories: {[d for d in os.listdir('.') if os.path.isdir(d)]}"
+        )
+        sys.exit(1)
+
     # Iterate batches and lines, resuming as needed
     batch_files = [
         f
-        for f in sorted(os.listdir(bp.batch_dir))
-        if f.startswith(bp.batch_prefix) and f.endswith(".jsonl")
+        for f in sorted(os.listdir(source_dir))
+        if f.endswith(".jsonl")
+        and (
+            (use_enhanced_files and "_enhanced" in f)
+            or (not use_enhanced_files and f.startswith(bp.batch_prefix))
+        )
     ]
 
-    print(f"📁 Found {len(batch_files)} batch files to process")
+    print(f"📁 Found {len(batch_files)} files to process in {source_dir}/")
+
+    if not batch_files:
+        print(f"❌ No files found matching pattern '{file_pattern}' in {source_dir}/")
+        print(
+            f"   Available files in {source_dir}/: {os.listdir(source_dir) if os.path.exists(source_dir) else 'Directory not found'}"
+        )
+        sys.exit(1)
 
     for batch_file in batch_files:
-        batch_path = os.path.join(bp.batch_dir, batch_file)
+        batch_path = os.path.join(source_dir, batch_file)
         skip_lines = batch_line_map.get(batch_file, 0)
 
-        print(f"📄 Processing batch file: {batch_file}")
+        print(f"📄 Processing file: {batch_file}")
 
         with open(batch_path, "r") as f:
             for line_num, line in enumerate(f, 1):
@@ -321,8 +379,56 @@ def main():
 
                 try:
                     product = json.loads(line)
+
+                    # Handle enhanced file structure where product data is nested
+                    if "product" in product and isinstance(product["product"], dict):
+                        # Enhanced file structure: {"product": {...}, "pricing": {...}, ...}
+                        product_data = product["product"]
+                        # Merge other sections into the product data
+                        if "pricing" in product:
+                            product_data["pricing_info"] = product["pricing"]
+                        if "attributes" in product:
+                            product_data["attributes"] = product["attributes"]
+                        if "imprinting" in product:
+                            product_data["imprinting"] = product["imprinting"]
+                        if "supplier" in product:
+                            product_data["supplier_info"] = product["supplier"]
+                        if "production" in product:
+                            product_data["production_info"] = product["production"]
+                        if "shipping" in product:
+                            product_data["shipping"] = product["shipping"]
+                        if "specifications" in product:
+                            # Merge specifications into product data
+                            specs = product["specifications"]
+                            if "weight" in specs:
+                                product_data["weight"] = specs["weight"]
+                            if "dimensions" in specs:
+                                product_data["dimensions"] = specs["dimensions"]
+                        if "fpd_config" in product:
+                            product_data["fpd_config"] = product["fpd_config"]
+                        if "variants" in product:
+                            product_data["variants"] = product["variants"]
+                        if "virtual_samples" in product:
+                            product_data["virtual_samples"] = product["virtual_samples"]
+                        if "related_products" in product:
+                            product_data["related_products"] = product[
+                                "related_products"
+                            ]
+                        if "services" in product:
+                            product_data["services"] = product["services"]
+                        if "warnings" in product:
+                            product_data["warnings"] = product["warnings"]
+                        if "categories" in product:
+                            product_data["categories"] = product["categories"]
+                        if "themes" in product:
+                            product_data["themes"] = product["themes"]
+
+                        product = product_data
+
                     product_id = str(
-                        product.get("ProductID") or product.get("product_id")
+                        product.get("ProductID")
+                        or product.get("product_id")
+                        or product.get("id")
                     )
                     product_name = product.get("Name") or product.get(
                         "name", "Unknown Product"
@@ -355,23 +461,32 @@ def main():
                     )
 
                     # Import
-                    success, result = import_product_to_wp(
-                        product,
-                        args.wp_api_url,
-                        args.wp_api_key,
-                        args.wp_basic_auth_user,
-                        args.wp_basic_auth_pass,
-                    )
+                    try:
+                        result = import_product_to_wp(
+                            product,
+                            args.wp_api_url,
+                            args.wp_api_key,
+                            args.wp_basic_auth_user,
+                            args.wp_basic_auth_pass,
+                        )
 
-                    if success:
-                        current_imported += 1
-                        imported_ids.add(product_id)
-                        batch_line_map[batch_file] = line_num
-                        print(f"✅ Imported: {product_name} (ID: {product_id})")
-                    else:
+                        # Check if import was successful
+                        if result.get("success") or result.get("imported", 0) > 0:
+                            current_imported += 1
+                            imported_ids.add(product_id)
+                            batch_line_map[batch_file] = line_num
+                            print(f"✅ Imported: {product_name} (ID: {product_id})")
+                        else:
+                            current_errors += 1
+                            error_msg = result.get("message", "Unknown error")
+                            print(
+                                f"❌ Failed to import: {product_name} (ID: {product_id}) - {error_msg}"
+                            )
+
+                    except Exception as e:
                         current_errors += 1
                         print(
-                            f"❌ Failed to import: {product_name} (ID: {product_id}) - {result}"
+                            f"❌ Exception importing: {product_name} (ID: {product_id}) - {str(e)}"
                         )
 
                     # Update progress file
@@ -390,7 +505,7 @@ def main():
                     )
 
                     # Update heartbeat every 5 products or on errors
-                    if current_imported % 5 == 0 or not success:
+                    if current_imported % 5 == 0 or current_errors > 0:
                         update_heartbeat(
                             "running",
                             current_imported,
