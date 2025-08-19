@@ -238,58 +238,33 @@ jobs:
           echo "WP_BASIC_AUTH_PASS: '${WP_BASIC_AUTH_PASS:+***}' (masked)"
           echo "=== End Debug ==="
 
-      - name: Get WordPress API parameters
-        id: wp_params
+      - name: Fetch API URL and Key from WordPress (Optional)
+        id: get_params
         run: |
-          echo "Fetching API parameters from WordPress..."
+          # Try to fetch from WordPress, but don't fail if it doesn't work
+          curl -s -u "${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}" "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.GITHUB_PARAMS_SECRET }}" > params.json || echo '{"api_url": "", "api_key": ""}' > params.json
           
-          # Build curl command with optional basic auth
-          if [ -n "${{ secrets.WP_BASIC_AUTH_USER }}" ] && [ -n "${{ secrets.WP_BASIC_AUTH_PASS }}" ]; then
-            echo "Using Basic Auth: ${{ secrets.WP_BASIC_AUTH_USER }}"
-            echo "Basic Auth configured: YES"
-            response=$(curl -s -w "\n%{http_code}" -u "${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}" \
-              "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.GITHUB_PARAMS_SECRET }}")
+          # Use WordPress values if available, otherwise use input parameters
+          WP_API_URL_FROM_WP=$(jq -r .api_url params.json)
+          WP_API_KEY_FROM_WP=$(jq -r .api_key params.json)
+          
+          # Use WordPress values if not empty, otherwise use input parameters
+          if [ "$WP_API_URL_FROM_WP" != "" ] && [ "$WP_API_URL_FROM_WP" != "null" ]; then
+            echo "WP_API_URL=$WP_API_URL_FROM_WP" >> $GITHUB_ENV
+            echo "WP_API_KEY=$WP_API_KEY_FROM_WP" >> $GITHUB_ENV
+            echo "Using WordPress configuration"
           else
-            echo "No Basic Auth configured"
-            echo "WP_BASIC_AUTH_USER: '${{ secrets.WP_BASIC_AUTH_USER }}'"
-            echo "WP_BASIC_AUTH_PASS: '${{ secrets.WP_BASIC_AUTH_PASS }}'"
-            response=$(curl -s -w "\n%{http_code}" \
-              "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.GITHUB_PARAMS_SECRET }}")
+            echo "WP_API_URL=${{ github.event.inputs.wp_api_url }}" >> $GITHUB_ENV
+            echo "WP_API_KEY=${{ github.event.inputs.wp_api_key }}" >> $GITHUB_ENV
+            echo "Using input parameters"
           fi
           
-          # Extract status code and body (handle newlines properly)
-          http_code=$(echo "$response" | tail -n1 | tr -d '\n\r"')
-          body=$(echo "$response" | sed '$d')
-          
-          echo "HTTP Status: $http_code"
-          echo "Response: $body"
-          
-          if [ "$http_code" -eq 200 ]; then
-            # Parse JSON response using jq (handle potential parsing issues)
-            api_url=$(echo "$body" | jq -r '.api_url // empty' 2>/dev/null || echo "")
-            api_key=$(echo "$body" | jq -r '.api_key // empty' 2>/dev/null || echo "")
-            
-            if [ -n "$api_url" ] && [ -n "$api_key" ]; then
-              echo "api_url=$api_url" >> $GITHUB_OUTPUT
-              echo "api_key=$api_key" >> $GITHUB_OUTPUT
-              echo "✅ Successfully fetched API parameters"
-            else
-              echo "❌ Missing api_url or api_key in response"
-              echo "Body content: $body"
-              exit 1
-            fi
-          else
-            echo "❌ Failed to fetch API parameters. Status: $http_code"
-            echo "Response: $body"
-            exit 1
-          fi
+          echo "WordPress integration status: $(jq -r .api_url params.json | grep -q '^$' && echo 'Not configured' || echo 'Configured')"
         env:
           WP_BASE_URL: ${{ env.WP_BASE_URL }}
 
       - name: Set Environment Variables
         run: |
-          echo "WP_API_URL=${{ steps.wp_params.outputs.api_url }}" >> $GITHUB_ENV
-          echo "WP_API_KEY=${{ steps.wp_params.outputs.api_key }}" >> $GITHUB_ENV
           echo "WP_BASE_URL=${{ env.WP_BASE_URL }}" >> $GITHUB_ENV
           echo "IMPORT_MODE=${{ github.event.inputs.mode }}" >> $GITHUB_ENV
           echo "PRODUCT_LIMIT=${{ github.event.inputs.product_limit }}" >> $GITHUB_ENV
@@ -307,60 +282,35 @@ jobs:
         run: |
           echo "=== Debug: API URL and Key ==="
           echo "WP_API_URL: '$WP_API_URL'"
-          echo "WP_API_KEY: '${WP_API_KEY:0:10}...' (showing first 10 chars)"
+          echo "WP_API_KEY: '$WP_API_KEY'"
           echo "WP_BASE_URL: '$WP_BASE_URL'"
-          echo "Use Enhanced Files: ${{ github.event.inputs.use_enhanced_files }}"
-          echo "Import Mode: ${{ github.event.inputs.mode }}"
-          echo "Product Limit: ${{ github.event.inputs.product_limit }}"
-
-          # Check if basic auth is configured
-          if [ -n "$WP_BASIC_AUTH_USER" ]; then
-            echo "WP_BASIC_AUTH_USER: '$WP_BASIC_AUTH_USER' (configured)"
-          else
-            echo "WP_BASIC_AUTH_USER: Not configured (optional)"
-          fi
-
-          if [ -n "$WP_BASIC_AUTH_PASS" ]; then
-            echo "WP_BASIC_AUTH_PASS: '***' (configured)"
-          else
-            echo "WP_BASIC_AUTH_PASS: Not configured (optional)"
-          fi
-
+          echo "WP_BASIC_AUTH_USER: '$WP_BASIC_AUTH_USER'"
+          echo "Params file content:"
+          cat params.json || echo "No params.json file found"
           echo "=== End Debug ==="
         env:
           WP_API_URL: ${{ env.WP_API_URL }}
           WP_API_KEY: ${{ env.WP_API_KEY }}
           WP_BASE_URL: ${{ env.WP_BASE_URL }}
           WP_BASIC_AUTH_USER: ${{ env.WP_BASIC_AUTH_USER }}
-          WP_BASIC_AUTH_PASS: ${{ env.WP_BASIC_AUTH_PASS }}
 
       - name: 🚀 Run WordPress Import
         run: |
           echo "=== Starting WordPress Import ==="
           echo "Mode: ${{ github.event.inputs.mode || 'sync' }}"
           echo "Product Limit: ${{ github.event.inputs.product_limit || '100' }}"
-          echo "Use Enhanced Files: ${{ github.event.inputs.use_enhanced_files || 'true' }}"
           echo "API URL: $WP_API_URL"
           echo "API Key: ${WP_API_KEY:0:10}..." # Show first 10 chars of API key
-          echo "Base URL: $WP_BASE_URL"
-
-          # Check basic auth configuration
-          if [ -n "$WP_BASIC_AUTH_USER" ] && [ -n "$WP_BASIC_AUTH_PASS" ]; then
-            echo "Basic Auth: Configured (User: $WP_BASIC_AUTH_USER)"
-          else
-            echo "Basic Auth: Not configured (using API key only)"
-          fi
-
+          echo "Basic Auth User: $WP_BASIC_AUTH_USER"
           echo "=== Running Import Script ==="
-
+          
           python3 import_to_wordpress.py \
             --mode ${{ github.event.inputs.mode || 'sync' }} \
             --product-limit ${{ github.event.inputs.product_limit || '100' }} \
-            --use-enhanced-files ${{ github.event.inputs.use_enhanced_files || 'true' }} \
             --wp-api-url "$WP_API_URL" \
             --wp-api-key "$WP_API_KEY" \
-            --wp-basic-auth-user "${WP_BASIC_AUTH_USER:-}" \
-            --wp-basic-auth-pass "${WP_BASIC_AUTH_PASS:-}"
+            --wp-basic-auth-user "$WP_BASIC_AUTH_USER" \
+            --wp-basic-auth-pass "$WP_BASIC_AUTH_PASS"
         env:
           WP_API_URL: ${{ env.WP_API_URL }}
           WP_API_KEY: ${{ env.WP_API_KEY }}
