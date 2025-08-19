@@ -299,14 +299,23 @@ jobs:
           echo "=== Starting WordPress Import ==="
           echo "Mode: ${{ github.event.inputs.mode || 'sync' }}"
           echo "Product Limit: ${{ github.event.inputs.product_limit || '100' }}"
+          echo "Use Enhanced Files: ${{ github.event.inputs.use_enhanced_files || 'true' }}"
           echo "API URL: $WP_API_URL"
           echo "API Key: ${WP_API_KEY:0:10}..." # Show first 10 chars of API key
           echo "Basic Auth User: $WP_BASIC_AUTH_USER"
+          
+          # Show available files
+          echo "=== Available Files ==="
+          echo "Enhanced files:"
+          ls -la enhanced/*.jsonl 2>/dev/null || echo "No enhanced files found"
+          echo "Batch files:"
+          ls -la batch/*.jsonl 2>/dev/null || echo "No batch files found"
           echo "=== Running Import Script ==="
           
           python3 import_to_wordpress.py \
             --mode ${{ github.event.inputs.mode || 'sync' }} \
             --product-limit ${{ github.event.inputs.product_limit || '100' }} \
+            --use-enhanced-files ${{ github.event.inputs.use_enhanced_files || 'true' }} \
             --wp-api-url "$WP_API_URL" \
             --wp-api-key "$WP_API_KEY" \
             --wp-basic-auth-user "$WP_BASIC_AUTH_USER" \
