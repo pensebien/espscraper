@@ -1,4 +1,4 @@
-name: WordPress Import (Batch Processing)
+name: WordPress Import (Product-by-Product)
 
 on:
   workflow_dispatch:
@@ -7,18 +7,32 @@ on:
         description: 'Import mode (sync or override)'
         required: false
         default: 'sync'
+        type: choice
+        options:
+          - sync
+          - override
       product_limit:
-        description: 'Total number of products to import (across all batches)'
+        description: 'Maximum number of products to import'
         required: false
         default: '100'
-      wp_api_url:
-        description: 'WordPress API URL'
+        type: string
+      use_enhanced_files:
+        description: 'Use enhanced files (with FPD config) instead of regular batch files'
         required: false
-        default: ''
-      wp_api_key:
-        description: 'WordPress API key'
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      environment:
+        description: 'Environment for .env file (dev, staging, prod)'
         required: false
-        default: ''
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
 
 permissions:
   contents: read
@@ -45,13 +59,14 @@ jobs:
             curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | sudo bash
             sudo apt-get install git-lfs
           fi
-          
+
           # Initialize git-lfs and pull actual files
           git lfs install
           git lfs pull
-          
-          echo "=== Checking batch files after LFS pull ==="
+
+          echo "=== Checking available files after LFS pull ==="
           ls -la batch/ 2>/dev/null || echo "No batch directory found"
+          ls -la enhanced/ 2>/dev/null || echo "No enhanced directory found"
           find . -name "*.jsonl" -type f | head -10 || echo "No JSONL files found"
 
       - name: Cache pip dependencies
@@ -71,11 +86,6 @@ jobs:
         run: |
           echo "=== Fetching latest files from artifacts branch ==="
 
-          # Create batch directory and clear it
-          mkdir -p batch
-          rm -f batch/*.jsonl
-          echo "✅ Cleared batch directory"
-
           # Check if artifacts branch exists
           if git ls-remote --heads origin artifacts | grep -q artifacts; then
             echo "✅ Artifacts branch exists, fetching latest files..."
@@ -89,11 +99,7 @@ jobs:
 
             # Pull LFS files from artifacts branch specifically
             echo "=== Pulling LFS files from artifacts branch ==="
-            git lfs pull origin artifacts --include="batch/*.jsonl" || echo "No LFS files to pull from artifacts branch"
-            
-            # Also try to checkout specific files from artifacts branch
-            echo "=== Checking out batch files from artifacts branch ==="
-            git checkout artifacts -- batch/ 2>/dev/null || echo "Could not checkout batch files from artifacts branch"
+            git lfs pull origin artifacts --include="*.jsonl" || echo "No LFS files to pull from artifacts branch"
 
             # Copy latest files if they exist (handle Git LFS)
             if [ -f "artifacts/espscraper/data/api_scraped_links.jsonl" ]; then
@@ -110,7 +116,7 @@ jobs:
             if [ -d "artifacts/batch" ]; then
               echo "=== Copying batch files from artifacts/batch/ ==="
               ls -la artifacts/batch/ || echo "No files in artifacts/batch/"
-              
+
               # First, ensure we have the actual files (not LFS pointers)
               echo "=== Checking if batch files are LFS pointers ==="
               for file in artifacts/batch/*.jsonl; do
@@ -120,18 +126,18 @@ jobs:
                   head -c 100 "$file" || echo "Could not read file"
                 fi
               done
-              
+
               # Try to pull LFS files specifically for batch directory
               echo "=== Pulling LFS files for batch directory ==="
               git lfs pull --include="batch/*.jsonl" || echo "No LFS files to pull for batch"
-              
+
               # Copy all JSONL files from artifacts/batch to local batch/
               echo "=== Copying batch files ==="
               cp artifacts/batch/*.jsonl batch/ 2>/dev/null || echo "No batch files to copy"
-              
+
               echo "=== Batch files after copy ==="
               ls -la batch/ || echo "No batch files found after copy"
-              
+
               # Verify the copied files are actual files, not pointers
               echo "=== Verifying copied batch files ==="
               for file in batch/*.jsonl; do
@@ -145,25 +151,103 @@ jobs:
               echo "⚠️ No artifacts/batch directory found"
             fi
 
+            # Copy enhanced files if they exist
+            if [ -d "artifacts/enhanced" ]; then
+              echo "=== Copying enhanced files from artifacts/enhanced/ ==="
+              ls -la artifacts/enhanced/ || echo "No files in artifacts/enhanced/"
+
+              # Try to pull LFS files specifically for enhanced directory
+              echo "=== Pulling LFS files for enhanced directory ==="
+              git lfs pull --include="enhanced/*.jsonl" || echo "No LFS files to pull for enhanced"
+
+              # Copy all JSONL files from artifacts/enhanced to local enhanced/
+              echo "=== Copying enhanced files ==="
+              cp artifacts/enhanced/*.jsonl enhanced/ 2>/dev/null || echo "No enhanced files to copy"
+
+              echo "=== Enhanced files after copy ==="
+              ls -la enhanced/ || echo "No enhanced files found after copy"
+
+              # Verify the copied files are actual files, not pointers
+              echo "=== Verifying copied enhanced files ==="
+              for file in enhanced/*.jsonl; do
+                if [ -f "$file" ]; then
+                  echo "Copied file: $file"
+                  file -b "$file" || echo "Could not determine file type"
+                  wc -l "$file" || echo "Could not count lines"
+                fi
+              done
+            else
+              echo "⚠️ No artifacts/enhanced directory found"
+            fi
+
             # Show file sizes after update
             echo "=== File sizes after update ==="
             ls -la espscraper/data/*.jsonl 2>/dev/null || echo "No JSONL files found in espscraper/data"
             ls -la batch/*.jsonl 2>/dev/null || echo "No batch files found in batch/"
+            ls -la enhanced/*.jsonl 2>/dev/null || echo "No enhanced files found in enhanced/"
 
           else
             echo "⚠️ Artifacts branch does not exist yet, starting fresh"
           fi
+
+      - name: Load Environment Variables
+        run: |
+          echo "Loading environment variables..."
+
+          # Check for environment-specific .env file first
+          if [ -f ".env.${{ github.event.inputs.environment || 'dev' }}" ]; then
+            echo "✅ Loading from .env.${{ github.event.inputs.environment || 'dev' }}"
+            # Read the file and set variables in GITHUB_ENV
+            while IFS= read -r line; do
+              # Skip comments and empty lines
+              if [[ ! "$line" =~ ^[[:space:]]*# ]] && [[ -n "$line" ]]; then
+                # Extract variable name and value
+                var_name=$(echo "$line" | cut -d'=' -f1)
+                var_value=$(echo "$line" | cut -d'=' -f2-)
+                # Set in GITHUB_ENV
+                echo "$var_name=$var_value" >> $GITHUB_ENV
+                echo "Set $var_name"
+              fi
+            done < ".env.${{ github.event.inputs.environment || 'dev' }}"
+          elif [ -f .env ]; then
+            echo "✅ Loading from .env"
+            while IFS= read -r line; do
+              if [[ ! "$line" =~ ^[[:space:]]*# ]] && [[ -n "$line" ]]; then
+                var_name=$(echo "$line" | cut -d'=' -f1)
+                var_value=$(echo "$line" | cut -d'=' -f2-)
+                echo "$var_name=$var_value" >> $GITHUB_ENV
+                echo "Set $var_name"
+              fi
+            done < .env
+          else
+            echo "⚠️  No .env file found, using GitHub secrets"
+          fi
+
+          # Set WP_BASE_URL from GitHub secret if not set from .env
+          if [ -z "$WP_BASE_URL" ]; then
+            echo "Using WP_BASE_URL from GitHub secret"
+            echo "WP_BASE_URL=${{ secrets.WP_BASE_URL }}" >> $GITHUB_ENV
+          else
+            echo "Using WP_BASE_URL from .env: $WP_BASE_URL"
+          fi
+
+          # Debug: Show what we loaded
+          echo "=== Debug: Environment Variables Loaded ==="
+          echo "WP_BASE_URL: '$WP_BASE_URL'"
+          echo "WP_BASIC_AUTH_USER: '$WP_BASIC_AUTH_USER'"
+          echo "WP_BASIC_AUTH_PASS: '${WP_BASIC_AUTH_PASS:+***}' (masked)"
+          echo "=== End Debug ==="
 
       - name: Fetch API URL and Key from WordPress (Optional)
         id: get_params
         run: |
           # Try to fetch from WordPress, but don't fail if it doesn't work
           curl -s -u "${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}" "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}" > params.json || echo '{"api_url": "", "api_key": ""}' > params.json
-          
+
           # Use WordPress values if available, otherwise use input parameters
           WP_API_URL_FROM_WP=$(jq -r .api_url params.json)
           WP_API_KEY_FROM_WP=$(jq -r .api_key params.json)
-          
+
           # Use WordPress values if not empty, otherwise use input parameters
           if [ "$WP_API_URL_FROM_WP" != "" ] && [ "$WP_API_URL_FROM_WP" != "null" ]; then
             echo "WP_API_URL=$WP_API_URL_FROM_WP" >> $GITHUB_ENV
@@ -174,10 +258,25 @@ jobs:
             echo "WP_API_KEY=${{ github.event.inputs.wp_api_key }}" >> $GITHUB_ENV
             echo "Using input parameters"
           fi
-          
+
           echo "WordPress integration status: $(jq -r .api_url params.json | grep -q '^$' && echo 'Not configured' || echo 'Configured')"
         env:
-          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
+          WP_BASE_URL: ${{ env.WP_BASE_URL }}
+
+      - name: Set Environment Variables
+        run: |
+          echo "WP_BASE_URL=${{ env.WP_BASE_URL }}" >> $GITHUB_ENV
+          echo "IMPORT_MODE=${{ github.event.inputs.mode }}" >> $GITHUB_ENV
+          echo "PRODUCT_LIMIT=${{ github.event.inputs.product_limit }}" >> $GITHUB_ENV
+          echo "USE_ENHANCED_FILES=${{ github.event.inputs.use_enhanced_files }}" >> $GITHUB_ENV
+
+          # Set basic auth variables only if they exist (optional)
+          if [ -n "${{ secrets.WP_BASIC_AUTH_USER }}" ]; then
+            echo "WP_BASIC_AUTH_USER=${{ secrets.WP_BASIC_AUTH_USER }}" >> $GITHUB_ENV
+          fi
+          if [ -n "${{ secrets.WP_BASIC_AUTH_PASS }}" ]; then
+            echo "WP_BASIC_AUTH_PASS=${{ secrets.WP_BASIC_AUTH_PASS }}" >> $GITHUB_ENV
+          fi
 
       - name: Debug API URL and Key
         run: |
@@ -192,22 +291,31 @@ jobs:
         env:
           WP_API_URL: ${{ env.WP_API_URL }}
           WP_API_KEY: ${{ env.WP_API_KEY }}
-          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
-          WP_BASIC_AUTH_USER: ${{ secrets.WP_BASIC_AUTH_USER }}
+          WP_BASE_URL: ${{ env.WP_BASE_URL }}
+          WP_BASIC_AUTH_USER: ${{ env.WP_BASIC_AUTH_USER }}
 
       - name: 🚀 Run WordPress Import
         run: |
           echo "=== Starting WordPress Import ==="
           echo "Mode: ${{ github.event.inputs.mode || 'sync' }}"
           echo "Product Limit: ${{ github.event.inputs.product_limit || '100' }}"
+          echo "Use Enhanced Files: ${{ github.event.inputs.use_enhanced_files || 'true' }}"
           echo "API URL: $WP_API_URL"
           echo "API Key: ${WP_API_KEY:0:10}..." # Show first 10 chars of API key
           echo "Basic Auth User: $WP_BASIC_AUTH_USER"
+
+          # Show available files
+          echo "=== Available Files ==="
+          echo "Enhanced files:"
+          ls -la enhanced/*.jsonl 2>/dev/null || echo "No enhanced files found"
+          echo "Batch files:"
+          ls -la batch/*.jsonl 2>/dev/null || echo "No batch files found"
           echo "=== Running Import Script ==="
-          
+
           python3 import_to_wordpress.py \
             --mode ${{ github.event.inputs.mode || 'sync' }} \
             --product-limit ${{ github.event.inputs.product_limit || '100' }} \
+            ${{ github.event.inputs.use_enhanced_files == 'true' && '--use-enhanced-files' || '' }} \
             --wp-api-url "$WP_API_URL" \
             --wp-api-key "$WP_API_KEY" \
             --wp-basic-auth-user "$WP_BASIC_AUTH_USER" \
@@ -215,9 +323,9 @@ jobs:
         env:
           WP_API_URL: ${{ env.WP_API_URL }}
           WP_API_KEY: ${{ env.WP_API_KEY }}
-          WP_BASIC_AUTH_USER: ${{ secrets.WP_BASIC_AUTH_USER }}
-          WP_BASIC_AUTH_PASS: ${{ secrets.WP_BASIC_AUTH_PASS }}
-          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
+          WP_BASE_URL: ${{ env.WP_BASE_URL }}
+          WP_BASIC_AUTH_USER: ${{ env.WP_BASIC_AUTH_USER }}
+          WP_BASIC_AUTH_PASS: ${{ env.WP_BASIC_AUTH_PASS }}
 
       - name: ✅ Notify completion
         run: echo "WordPress import complete."
