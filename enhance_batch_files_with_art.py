@@ -792,6 +792,60 @@ class ArtTemplateProcessor:
                 return self._get_large_image_url(main_image)
             return ""
 
+    def _update_fpd_config_with_variant_images(self, fpd_config: Dict, color_images: Dict) -> None:
+        """Update FPD config views to use HitPromo variant images instead of original images"""
+        try:
+            if not fpd_config.get("views"):
+                return
+            
+            # Get all available variant images
+            variant_images = []
+            for color_name, color_data in color_images.items():
+                images = color_data.get("images", [])
+                for img_url in images:
+                    variant_images.append({
+                        "url": img_url,
+                        "color": color_name,
+                        "type": "variant"
+                    })
+            
+            if not variant_images:
+                logging.warning("⚠️ No variant images available for FPD views")
+                return
+            
+            # Update each view to use variant images
+            views = fpd_config["views"]
+            for i, view in enumerate(views):
+                if view.get("elements"):
+                    # Select a variant image for this view
+                    variant_index = i % len(variant_images)
+                    selected_variant = variant_images[variant_index]
+                    
+                    # Update the first image element (base image)
+                    for element in view["elements"]:
+                        if element.get("type") == "image":
+                            element["source"] = selected_variant["url"]
+                            element["title"] = f"Base Image - {selected_variant['color']} - {view.get('title', 'View')}"
+                            logging.info(f"🎨 Updated FPD view {i+1} with {selected_variant['color']} variant image: {selected_variant['url']}")
+                            break
+            
+            # Also update the fpd_product_structure views
+            if fpd_config.get("fpd_product_structure", {}).get("views"):
+                product_views = fpd_config["fpd_product_structure"]["views"]
+                for i, view in enumerate(product_views):
+                    if view.get("elements"):
+                        variant_index = i % len(variant_images)
+                        selected_variant = variant_images[variant_index]
+                        
+                        for element in view["elements"]:
+                            if element.get("type") == "image":
+                                element["source"] = selected_variant["url"]
+                                element["title"] = f"Base Image - {selected_variant['color']} - {view.get('title', 'View')}"
+                                break
+                                
+        except Exception as e:
+            logging.error(f"❌ Error updating FPD config with variant images: {e}")
+
     def _get_large_image_url(self, original_url: str) -> str:
         """Convert a small image URL to a larger, higher-quality version"""
         if not original_url:
@@ -960,7 +1014,8 @@ class ArtTemplateProcessor:
             "related_products": product_data.get("related_products", []),
             "services": product_data.get("services", []),
             "warnings": product_data.get("warnings", []),
-            "variants": product_data.get("variants", []),
+            "variants": self._extract_variants_optimized(product_data),
+            "color_images": product_data.get("color_images", {}),
             "fpd_config": self._create_fpd_config_dict(product_data),
             "art_template": {
                 "url": product_data.get("product_art_url", ""),
@@ -1115,6 +1170,96 @@ class ArtTemplateProcessor:
             }
             for tier in bulk_pricing
         ]
+
+    def _extract_variants_optimized(self, product_data: Dict) -> List[Dict]:
+        """Extract and create product variants from color data"""
+        variants = []
+        
+        try:
+            # Get colors from attributes
+            colors = product_data.get("attributes", {}).get("colors", [])
+            
+            # Get color images if available
+            color_images = product_data.get("color_images", {})
+            
+            # Get pricing information
+            pricing_info = product_data.get("pricing_info", {})
+            base_price = pricing_info.get("base_price", {}).get("Price", 0.0)
+            bulk_pricing = pricing_info.get("bulk_pricing", [])
+            
+            for color in colors:
+                color_name = color.get("Name", "")
+                color_code = color.get("Code", "")
+                vendor_code = color.get("VendorCode", "")
+                sku = color.get("SKU", "")
+                image_url = color.get("ImageUrl", "")
+                
+                # Get variant images if available
+                variant_images = []
+                if color_name in color_images:
+                    variant_images = color_images[color_name].get("images", [])
+                elif color.get("images"):
+                    variant_images = color.get("images", [])
+                
+                # Create variant structure
+                variant = {
+                    "id": f"{product_data.get('product_id', '')}_{color_code}",
+                    "name": f"{product_data.get('name', '')} - {color_name}",
+                    "sku": sku,
+                    "color": {
+                        "name": color_name,
+                        "code": color_code,
+                        "vendor_code": vendor_code
+                    },
+                    "price": base_price,
+                    "regular_price": base_price,
+                    "sale_price": base_price,
+                    "currency": pricing_info.get("currency", "USD"),
+                    "images": variant_images,
+                    "featured_image": variant_images[0] if variant_images else "",
+                    "gallery_images": variant_images,
+                    "in_stock": True,
+                    "manage_stock": False,
+                    "stock_quantity": None,
+                    "attributes": {
+                        "color": color_name,
+                        "color_code": color_code,
+                        "vendor_code": vendor_code
+                    },
+                    "bulk_pricing": bulk_pricing,
+                    "meta": {
+                        "color_name": color_name,
+                        "color_code": color_code,
+                        "vendor_code": vendor_code,
+                        "image_count": len(variant_images)
+                    }
+                }
+                
+                variants.append(variant)
+                
+        except Exception as e:
+            logging.error(f"❌ Error extracting variants: {e}")
+        
+        return variants
+
+    def _update_variants_with_hitpromo_images(self, variants: List[Dict], color_images: Dict) -> List[Dict]:
+        """Update variants with HitPromo images"""
+        try:
+            for variant in variants:
+                color_name = variant.get("color", {}).get("name", "")
+                if color_name in color_images:
+                    variant_images = color_images[color_name].get("images", [])
+                    variant["images"] = variant_images
+                    variant["featured_image"] = variant_images[0] if variant_images else ""
+                    variant["gallery_images"] = variant_images
+                    variant["meta"]["image_count"] = len(variant_images)
+                    logging.info(f"🎨 Updated variant {color_name} with {len(variant_images)} HitPromo images")
+            
+            return variants
+            
+        except Exception as e:
+            logging.error(f"❌ Error updating variants with HitPromo images: {e}")
+            return variants
 
     def _extract_woo_attributes(self, product_data: Dict) -> List[Dict]:
         """Extract WooCommerce attributes"""
@@ -1652,6 +1797,7 @@ class BatchFileEnhancer:
 
             # Get art template URL
             art_url = self.art_processor.get_product_art_url(product_number)
+            local_file = None
             if art_url:
                 product["product_art_url"] = art_url
 
@@ -1703,16 +1849,53 @@ class BatchFileEnhancer:
                             color["images"] = color_data["images"]
                             color["hitpromo_images"] = color_data
 
-            # Create optimized structure
+            # Create clean, optimized structure to replace the messy original
             optimized_product = self.art_processor.create_optimized_structure(product)
 
-            # Add the optimized structure to the original product
-            product["optimized"] = optimized_product
+            # Add HitPromo images to the optimized structure
+            if hitpromo_images.get("main_image"):
+                optimized_product["product"]["featured_image"] = hitpromo_images["main_image"]
+            
+            if hitpromo_images.get("gallery_images"):
+                optimized_product["product"]["gallery_images"] = hitpromo_images["gallery_images"]
+            
+            if hitpromo_images.get("color_images"):
+                optimized_product["color_images"] = hitpromo_images["color_images"]
+                
+                # Update colors in optimized structure with their images
+                colors = optimized_product.get("attributes", {}).get("colors", [])
+                for color in colors:
+                    color_name = color.get("name", "")
+                    if color_name in hitpromo_images["color_images"]:
+                        color_data = hitpromo_images["color_images"][color_name]
+                        color["images"] = color_data["images"]
+                        color["hitpromo_images"] = color_data
+
+            # Add art template info to optimized structure
+            if art_url:
+                optimized_product["art_template"]["url"] = art_url
+            if local_file:
+                optimized_product["art_template"]["local_file"] = local_file
+                optimized_product["art_template"]["downloaded"] = True
+
+            # Update FPD config to use HitPromo variant images
+            if hitpromo_images.get("color_images") and optimized_product.get("fpd_config"):
+                self.art_processor._update_fpd_config_with_variant_images(
+                    optimized_product["fpd_config"], 
+                    hitpromo_images["color_images"]
+                )
+            
+            # Update variants with HitPromo images
+            if hitpromo_images.get("color_images"):
+                optimized_product["variants"] = self.art_processor._update_variants_with_hitpromo_images(
+                    optimized_product["variants"], 
+                    hitpromo_images["color_images"]
+                )
 
             logging.info(
-                f"✅ Enhanced product {product.get('product_id', 'unknown')} with WooCommerce structure"
+                f"✅ Enhanced product {product.get('product_id', 'unknown')} with clean structure"
             )
-            return product
+            return optimized_product
 
         except Exception as e:
             logging.error(f"❌ Error enhancing product: {e}")
@@ -1830,15 +2013,15 @@ class BatchFileEnhancer:
                                 for line in f:
                                     if line.strip():
                                         product = json.loads(line)
-                                        if product.get("art_template_local_file"):
+                                        # Check for art templates in the clean structure
+                                        art_template = product.get("art_template", {})
+                                        if art_template.get("downloaded", False):
                                             processing_stats["art_downloads"] += 1
-                                        # Check for FPD views in optimized structure
-                                        optimized_fpd = product.get(
-                                            "optimized", {}
-                                        ).get("fpd_config", {})
-                                        if optimized_fpd.get("views"):
+                                        # Check for FPD views in the clean structure
+                                        fpd_config = product.get("fpd_config", {})
+                                        if fpd_config.get("views"):
                                             processing_stats["fpd_views"] += len(
-                                                optimized_fpd["views"]
+                                                fpd_config["views"]
                                             )
                                         if product.get(
                                             "image_url"
