@@ -1,0 +1,490 @@
+name: Fixer Enhancement Workflow (with HitPromo Color Images)
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_file:
+        description: 'Batch file to enhance (e.g., batch_20250713_080055_2.jsonl) - leave empty to process all batch files with HitPromo color images'
+        required: false
+        type: string
+        default: ''
+      max_products:
+        description: 'Maximum number of products to process (optional)'
+        required: false
+        type: string
+        default: ''
+      force_reprocess:
+        description: 'Force reprocessing even if enhanced file exists'
+        required: false
+        type: boolean
+        default: false
+      resume:
+        description: 'Resume from last processed state'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  enhance-batch-files:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Checkout artifacts branch
+        uses: actions/checkout@v4
+        with:
+          ref: artifacts
+          path: artifacts-branch
+
+      - name: Create directories
+        run: |
+          echo "📁 Creating directories..."
+          mkdir -p batch
+          mkdir -p enhanced
+
+      - name: Copy batch files from artifacts branch
+        run: |
+          echo "📄 Copying batch files from artifacts branch..."
+
+          # Debug: Check what's in artifacts-branch
+          echo "📁 Current directory: $(pwd)"
+          echo "📁 Contents of current directory:"
+          ls -la
+          echo "📁 Contents of artifacts-branch directory:"
+          ls -la artifacts-branch/ || echo "artifacts-branch directory not found"
+
+          # Copy batch files from artifacts branch
+          if [ -d "artifacts-branch/batch" ]; then
+            echo "📁 Found artifacts-branch/batch directory"
+            echo "📄 Contents of artifacts-branch/batch:"
+            ls -la artifacts-branch/batch/
+            cp artifacts-branch/batch/*.jsonl batch/ 2>/dev/null || echo "No batch files to copy"
+            echo "✅ Copied batch files from artifacts branch"
+          else
+            echo "⚠️ No batch directory in artifacts branch"
+            echo "📁 Available directories in artifacts-branch:"
+            ls -la artifacts-branch/ || echo "artifacts-branch not accessible"
+          fi
+
+          # Also check for batch files in root of artifacts branch
+          if ls artifacts-branch/batch_*.jsonl 1>/dev/null 2>&1; then
+            echo "📄 Found batch files in artifacts-branch root"
+            cp artifacts-branch/batch_*.jsonl batch/ 2>/dev/null || echo "No batch files to copy"
+            echo "✅ Copied batch files from artifacts branch root"
+          fi
+
+          echo "📄 Available batch files from artifacts branch:"
+          ls -la batch/*.jsonl 2>/dev/null || echo "No batch files found"
+
+      - name: Process batch files from artifacts branch
+        run: |
+          echo "🔄 Processing batch files from artifacts branch..."
+
+          # Determine which files to process
+          if [ -n "${{ github.event.inputs.batch_file }}" ]; then
+            echo "📄 Processing specific batch file: ${{ github.event.inputs.batch_file }}"
+
+            # Check in batch directory first
+            if [ -f "batch/${{ github.event.inputs.batch_file }}" ]; then
+              BATCH_FILE="batch/${{ github.event.inputs.batch_file }}"
+              echo "✅ Found in batch directory: $BATCH_FILE"
+            elif [ -f "${{ github.event.inputs.batch_file }}" ]; then
+              BATCH_FILE="${{ github.event.inputs.batch_file }}"
+              echo "✅ Found in root directory: $BATCH_FILE"
+            else
+              echo "❌ Batch file not found: ${{ github.event.inputs.batch_file }}"
+              echo "Available batch files from artifacts branch:"
+              ls -la batch/*.jsonl 2>/dev/null || echo "No batch files found"
+              exit 1
+            fi
+
+            # Process single file
+            echo "🔄 Processing: $BATCH_FILE"
+
+            # Extract base name for enhanced file
+            BASE_NAME=$(basename "$BATCH_FILE" .jsonl)
+            ENHANCED_FILE="enhanced/${BASE_NAME}_enhanced.jsonl"
+
+            echo "📄 Batch file size: $(ls -lh $BATCH_FILE | awk '{print $5}')"
+            echo "📄 Batch file modified: $(ls -l $BATCH_FILE | awk '{print $6, $7, $8}')"
+
+            # Check if enhanced file already exists in artifacts branch
+            if [ -f "artifacts-branch/enhanced/${BASE_NAME}_enhanced.jsonl" ]; then
+              echo "📄 Enhanced file exists in artifacts branch: artifacts-branch/enhanced/${BASE_NAME}_enhanced.jsonl"
+              echo "📄 Enhanced file size: $(ls -lh artifacts-branch/enhanced/${BASE_NAME}_enhanced.jsonl | awk '{print $5}')"
+              echo "📄 Enhanced file modified: $(ls -l artifacts-branch/enhanced/${BASE_NAME}_enhanced.jsonl | awk '{print $6, $7, $8}')"
+
+              # Compare modification times
+              BATCH_TIME=$(stat -c %Y "$BATCH_FILE")
+              ENHANCED_TIME=$(stat -c %Y "artifacts-branch/enhanced/${BASE_NAME}_enhanced.jsonl")
+
+              if [ "$BATCH_TIME" -gt "$ENHANCED_TIME" ]; then
+                echo "⚠️ Batch file is newer than enhanced file - reprocessing needed"
+                NEEDS_PROCESSING=true
+              else
+                echo "✅ Enhanced file is up to date"
+                NEEDS_PROCESSING=false
+              fi
+            else
+              echo "📄 Enhanced file does not exist in artifacts branch - processing needed"
+              NEEDS_PROCESSING=true
+            fi
+
+            # Check force reprocess flag
+            if [ "${{ github.event.inputs.force_reprocess }}" = "true" ]; then
+              echo "🔄 Force reprocess enabled - will reprocess regardless of status"
+              NEEDS_PROCESSING=true
+            fi
+
+            if [ "$NEEDS_PROCESSING" = "true" ]; then
+              echo "🔄 Processing needed - will create/update enhanced file"
+
+              # Resume functionality: Check resume state from artifacts branch
+              STATE_FILE="enhanced/${BASE_NAME}_enhancement_state.json"
+
+              if [ -f "artifacts-branch/enhanced/${BASE_NAME}_enhancement_state.json" ] && [ "${{ github.event.inputs.resume }}" = "true" ]; then
+                echo "📄 Found existing state file in artifacts branch: artifacts-branch/enhanced/${BASE_NAME}_enhancement_state.json"
+                echo "📄 State file contents:"
+                cat "artifacts-branch/enhanced/${BASE_NAME}_enhancement_state.json" | jq '.' 2>/dev/null || echo "Could not parse state file"
+
+                # Copy state file to local for resume
+                cp "artifacts-branch/enhanced/${BASE_NAME}_enhancement_state.json" "$STATE_FILE"
+
+                # Extract last processed line
+                LAST_LINE=$(cat "$STATE_FILE" | jq -r '.last_processed_line // 0' 2>/dev/null || echo "0")
+                TOTAL_LINES=$(cat "$STATE_FILE" | jq -r '.total_lines // 0' 2>/dev/null || echo "0")
+
+                if [ "$LAST_LINE" -gt 0 ] && [ "$TOTAL_LINES" -gt 0 ]; then
+                  echo "🔄 Resuming from line $LAST_LINE of $TOTAL_LINES"
+                  RESUME_FLAG="--resume"
+                else
+                  echo "🔄 No valid resume state found - starting fresh"
+                  RESUME_FLAG=""
+                fi
+              else
+                echo "🔄 Starting fresh processing"
+                RESUME_FLAG=""
+              fi
+
+              # Run enhancement
+              echo "🔄 Running enhancement with FPD configuration..."
+              echo "📄 Processing batch file from artifacts branch: $BATCH_FILE"
+              echo "📁 Output will be saved to enhanced/ directory"
+              echo "🔄 Resume flag: $RESUME_FLAG"
+
+              # Debug: Show current directory and files
+              echo "📁 Current directory: $(pwd)"
+              echo "📄 Script location: $(which python3)"
+              echo "📄 Script file: $(ls -la enhance_batch_files_with_art.py)"
+              echo "📄 Batch directory contents:"
+              ls -la batch/
+              echo "📄 Batch file to process: $BATCH_FILE"
+              echo "📄 Batch file exists: $(test -f "$BATCH_FILE" && echo "YES" || echo "NO")"
+
+              # Run the enhancement script with verbose output
+              python3 enhance_batch_files_with_art.py \
+                --batch-dir batch \
+                --log-level DEBUG \
+                $RESUME_FLAG
+
+              # Verify enhanced file was created
+              echo "🔍 Checking if enhanced file was created..."
+              if [ -f "$ENHANCED_FILE" ]; then
+                echo "✅ Enhanced file created: $ENHANCED_FILE"
+                echo "📄 File size: $(ls -lh $ENHANCED_FILE | awk '{print $5}')"
+                echo "📄 File lines: $(wc -l < $ENHANCED_FILE)"
+              else
+                echo "❌ Enhanced file NOT created: $ENHANCED_FILE"
+                echo "📁 Checking enhanced directory contents:"
+                ls -la enhanced/ || echo "No enhanced directory"
+                echo "📁 Checking batch directory contents:"
+                ls -la $(dirname $BATCH_FILE)/*_enhanced.jsonl 2>/dev/null || echo "No enhanced files in batch directory"
+              fi
+
+              # Create/Update state file
+              echo "📝 Creating/updating state file..."
+
+              # Get current timestamp
+              TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+              # Count total lines in batch file
+              TOTAL_LINES=$(wc -l < "$BATCH_FILE")
+
+              # Create state information using jq
+              jq -n \
+                --arg batch_file "$BATCH_FILE" \
+                --arg enhanced_file "$ENHANCED_FILE" \
+                --arg base_name "$BASE_NAME" \
+                --arg total_lines "$TOTAL_LINES" \
+                --arg last_processed_line "$TOTAL_LINES" \
+                --arg last_processed_timestamp "$TIMESTAMP" \
+                --arg workflow_run_id "${{ github.run_id }}" \
+                --arg workflow_run_number "${{ github.run_number }}" \
+                --arg force_reprocess "${{ github.event.inputs.force_reprocess }}" \
+                --arg resume "${{ github.event.inputs.resume }}" \
+                '{
+                  "batch_file": $batch_file,
+                  "enhanced_file": $enhanced_file,
+                  "base_name": $base_name,
+                  "total_lines": ($total_lines | tonumber),
+                  "last_processed_line": ($last_processed_line | tonumber),
+                  "last_processed_timestamp": $last_processed_timestamp,
+                  "workflow_run_id": $workflow_run_id,
+                  "workflow_run_number": $workflow_run_number,
+                  "force_reprocess": ($force_reprocess == "true"),
+                  "resume": ($resume == "true"),
+                  "status": "completed"
+                }' > "$STATE_FILE"
+
+              echo "✅ State file created: $STATE_FILE"
+            else
+              echo "✅ Skipping processing - enhanced file is up to date in artifacts branch"
+            fi
+
+          else
+            echo "📄 No specific batch file provided - processing ALL batch files from artifacts branch (no file limit)"
+
+            # Find all batch files from artifacts branch (excluding enhanced files)
+            BATCH_FILES=$(ls batch/batch_*.jsonl 2>/dev/null | grep -v "_enhanced" | sort)
+
+            if [ -z "$BATCH_FILES" ]; then
+              echo "❌ No batch files found from artifacts branch to process"
+              exit 1
+            fi
+
+            echo "📄 Found batch files from artifacts branch to process:"
+            echo "$BATCH_FILES"
+
+            PROCESSED_COUNT=0
+            SKIPPED_COUNT=0
+
+            for BATCH_FILE in $BATCH_FILES; do
+              echo ""
+              echo "🔄 Processing: $BATCH_FILE"
+
+              # Extract base name for enhanced file
+              BASE_NAME=$(basename "$BATCH_FILE" .jsonl)
+              ENHANCED_FILE="enhanced/${BASE_NAME}_enhanced.jsonl"
+
+              echo "📄 Batch file size: $(ls -lh $BATCH_FILE | awk '{print $5}')"
+              echo "📄 Batch file modified: $(ls -l $BATCH_FILE | awk '{print $6, $7, $8}')"
+
+              # Smart skip logic: Check if enhanced file already exists in artifacts branch
+              if [ -f "artifacts-branch/enhanced/${BASE_NAME}_enhanced.jsonl" ]; then
+                echo "📄 Enhanced file exists in artifacts branch: artifacts-branch/enhanced/${BASE_NAME}_enhanced.jsonl"
+                echo "📄 Enhanced file size: $(ls -lh artifacts-branch/enhanced/${BASE_NAME}_enhanced.jsonl | awk '{print $5}')"
+                echo "📄 Enhanced file modified: $(ls -l artifacts-branch/enhanced/${BASE_NAME}_enhanced.jsonl | awk '{print $6, $7, $8}')"
+
+                # Compare modification times
+                BATCH_TIME=$(stat -c %Y "$BATCH_FILE")
+                ENHANCED_TIME=$(stat -c %Y "artifacts-branch/enhanced/${BASE_NAME}_enhanced.jsonl")
+
+                if [ "$BATCH_TIME" -gt "$ENHANCED_TIME" ]; then
+                  echo "⚠️ Batch file is newer than enhanced file - reprocessing needed"
+                  NEEDS_PROCESSING=true
+                else
+                  echo "✅ Enhanced file is up to date"
+                  NEEDS_PROCESSING=false
+                fi
+              else
+                echo "📄 Enhanced file does not exist in artifacts branch - processing needed"
+                NEEDS_PROCESSING=true
+              fi
+
+              # Check force reprocess flag
+              if [ "${{ github.event.inputs.force_reprocess }}" = "true" ]; then
+                echo "🔄 Force reprocess enabled - will reprocess regardless of status"
+                NEEDS_PROCESSING=true
+              fi
+
+              if [ "$NEEDS_PROCESSING" = "true" ]; then
+                echo "🔄 Processing needed - will create/update enhanced file"
+
+                # Run enhancement
+                echo "🔄 Running enhancement with FPD configuration..."
+                echo "📄 Processing batch file from artifacts branch: $BATCH_FILE"
+                echo "📁 Output will be saved to enhanced/ directory"
+
+                # Debug: Show current directory and files
+                echo "📁 Current directory: $(pwd)"
+                echo "📄 Script location: $(which python3)"
+                echo "📄 Script file: $(ls -la enhance_batch_files_with_art.py)"
+                echo "📄 Batch directory contents:"
+                ls -la batch/
+                echo "📄 Batch file to process: $BATCH_FILE"
+                echo "📄 Batch file exists: $(test -f "$BATCH_FILE" && echo "YES" || echo "NO")"
+
+                # Run the enhancement script with verbose output
+                python3 enhance_batch_files_with_art.py \
+                  --batch-dir batch \
+                  --log-level DEBUG
+
+                # Verify enhanced file was created
+                echo "🔍 Checking if enhanced file was created..."
+                if [ -f "$ENHANCED_FILE" ]; then
+                  echo "✅ Enhanced file created: $ENHANCED_FILE"
+                  echo "📄 File size: $(ls -lh $ENHANCED_FILE | awk '{print $5}')"
+                  echo "📄 File lines: $(wc -l < $ENHANCED_FILE)"
+                else
+                  echo "❌ Enhanced file NOT created: $ENHANCED_FILE"
+                  echo "📁 Checking enhanced directory contents:"
+                  ls -la enhanced/ || echo "No enhanced directory"
+                  echo "📁 Checking batch directory contents:"
+                  ls -la $(dirname $BATCH_FILE)/*_enhanced.jsonl 2>/dev/null || echo "No enhanced files in batch directory"
+                fi
+
+                # Create/Update state file
+                STATE_FILE="enhanced/${BASE_NAME}_enhancement_state.json"
+
+                # Get current timestamp
+                TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+                # Count total lines in batch file
+                TOTAL_LINES=$(wc -l < "$BATCH_FILE")
+
+                # Create state information using jq
+                jq -n \
+                  --arg batch_file "$BATCH_FILE" \
+                  --arg enhanced_file "$ENHANCED_FILE" \
+                  --arg base_name "$BASE_NAME" \
+                  --arg total_lines "$TOTAL_LINES" \
+                  --arg last_processed_line "$TOTAL_LINES" \
+                  --arg last_processed_timestamp "$TIMESTAMP" \
+                  --arg workflow_run_id "${{ github.run_id }}" \
+                  --arg workflow_run_number "${{ github.run_number }}" \
+                  --arg force_reprocess "${{ github.event.inputs.force_reprocess }}" \
+                  --arg resume "${{ github.event.inputs.resume }}" \
+                  '{
+                    "batch_file": $batch_file,
+                    "enhanced_file": $enhanced_file,
+                    "base_name": $base_name,
+                    "total_lines": ($total_lines | tonumber),
+                    "last_processed_line": ($last_processed_line | tonumber),
+                    "last_processed_timestamp": $last_processed_timestamp,
+                    "workflow_run_id": $workflow_run_id,
+                    "workflow_run_number": $workflow_run_number,
+                    "force_reprocess": ($force_reprocess == "true"),
+                    "resume": ($resume == "true"),
+                    "status": "completed"
+                  }' > "$STATE_FILE"
+
+                echo "✅ State file created: $STATE_FILE"
+
+                PROCESSED_COUNT=$((PROCESSED_COUNT + 1))
+              else
+                echo "✅ Skipping processing - enhanced file is up to date in artifacts branch"
+                SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+              fi
+            done
+
+            echo ""
+            echo "📊 Processing Summary:"
+            echo "✅ Processed: $PROCESSED_COUNT files"
+            echo "⏭️ Skipped: $SKIPPED_COUNT files"
+          fi
+
+      - name: Check results
+        run: |
+          echo "📊 Checking output files..."
+          echo "📁 Enhanced directory contents:"
+          ls -la enhanced/ || echo "No enhanced directory"
+
+          if [ -d "enhanced" ]; then
+            echo "📄 Enhanced files:"
+            ls -la enhanced/*_enhanced.jsonl || echo "No enhanced files found"
+
+            # Show file sizes
+            for file in enhanced/*_enhanced.jsonl; do
+              if [ -f "$file" ]; then
+                echo "📄 $(basename $file): $(ls -lh $file | awk '{print $5}')"
+              fi
+            done
+
+            # Show state files
+            echo "📄 State files:"
+            ls -la enhanced/*_enhancement_state.json || echo "No state files found"
+          fi
+
+      - name: Copy enhanced files to artifacts branch
+        run: |
+          echo "📝 Copying enhanced files to artifacts branch..."
+
+          # Create directories
+          mkdir -p artifacts-branch/enhanced
+          mkdir -p artifacts-branch/batch
+
+          # Copy enhanced files
+          if [ -d "enhanced" ] && [ "$(ls -A enhanced)" ]; then
+            cp enhanced/*_enhanced.jsonl artifacts-branch/enhanced/ 2>/dev/null || echo "No enhanced files to copy"
+            cp enhanced/*_enhancement_state.json artifacts-branch/enhanced/ 2>/dev/null || echo "No state files to copy"
+            echo "✅ Copied enhanced files and state files"
+          else
+            echo "⚠️ No enhanced files found"
+          fi
+
+          echo "📁 Artifacts branch enhanced directory contents:"
+          ls -la artifacts-branch/enhanced/ || echo "No enhanced directory in artifacts branch"
+
+      - name: Commit and push to artifacts branch
+        run: |
+          cd artifacts-branch
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Check if there are any files to commit
+          if [ -n "$(git status --porcelain)" ]; then
+            git add .
+            git commit -m "Add enhanced files from fixer enhancement workflow run ${{ github.run_number }} - $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+            git push origin artifacts
+            echo "✅ Successfully pushed enhanced files to artifacts branch"
+          else
+            echo "ℹ️ No changes to commit"
+          fi
+
+      - name: Upload enhanced files as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: enhanced-files-with-fpd
+          path: |
+            enhanced/*_enhanced.jsonl
+            enhanced/*_enhancement_state.json
+          retention-days: 7
+
+      - name: Completion Message
+        run: |
+          echo "🎉 Fixer Enhancement Workflow Complete!"
+          echo "📦 Check the artifacts for the enhanced files and state information"
+          echo ""
+          echo "🔄 Next steps:"
+          echo "1. Enhanced files are now available in the artifacts branch"
+          echo "2. Files include HitPromo color images for all product variants"
+          echo "3. FPD configurations with design areas are ready for use"
+          echo "4. Upload to WordPress for import"
+          echo "5. The FPD integration will use the enhanced configuration"
+          echo ""
+          echo "📝 State tracking:"
+          echo "- State files: enhanced/*_enhancement_state.json"
+          echo "- Resume enabled: ${{ github.event.inputs.resume }}"
+          echo "- Force reprocess: ${{ github.event.inputs.force_reprocess }}"
+          echo ""
+          echo "🎨 Enhanced features:"
+          echo "- HitPromo images fetched for all color variants"
+          echo "- Smart skip logic prevents reprocessing unchanged files"
+          echo "- Resume functionality for large batch processing"
