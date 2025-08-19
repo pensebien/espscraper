@@ -115,48 +115,28 @@ def import_product_to_wp(
             "WordPress API URL is required but not provided or is empty/null"
         )
 
-    # Use the /import-product endpoint for individual product imports
+    # Use the import-product endpoint
     if wp_api_url.endswith("/upload"):
         import_url = wp_api_url.replace("/upload", "/import-product")
-    elif wp_api_url.endswith("/import-product"):
-        import_url = wp_api_url
     else:
-        # Extract base URL and construct import endpoint
-        base_url = wp_api_url.replace("/wp-json/promostandards-importer/v1/upload", "")
-        import_url = (
-            base_url.rstrip("/") + "/wp-json/promostandards-importer/v1/import-product"
-        )
+        import_url = wp_api_url.rstrip("/") + "/import-product"
 
-    # Prepare headers
-    headers = {
-        "X-API-Key": wp_api_key,
-        "Content-Type": "application/json",
-    }
-
-    # Add basic auth if provided
-    if (
-        basic_auth_user
-        and basic_auth_pass
-        and basic_auth_user.strip()
-        and basic_auth_pass.strip()
-    ):
-        import base64
-
-        auth_string = f"{basic_auth_user}:{basic_auth_pass}"
-        auth_bytes = auth_string.encode("ascii")
-        auth_b64 = base64.b64encode(auth_bytes).decode("ascii")
-        headers["Authorization"] = f"Basic {auth_b64}"
-
+    headers = {"Content-Type": "application/json", "X-API-Key": wp_api_key}
+    auth = (
+        (basic_auth_user, basic_auth_pass)
+        if basic_auth_user and basic_auth_pass
+        else None
+    )
     try:
-        # Send product data as JSON body to /import-product endpoint
-        response = requests.post(
+        resp = requests.post(
             import_url,
             json=product,
             headers=headers,
+            auth=auth,
             timeout=30,
         )
-        response.raise_for_status()
-        return response.json()
+        resp.raise_for_status()
+        return resp.json()
     except requests.exceptions.RequestException as e:
         raise Exception(f"Failed to import product: {str(e)}")
 
@@ -181,9 +161,9 @@ def main():
     )
     parser.add_argument(
         "--use-enhanced-files",
-        default=os.getenv("USE_ENHANCED_FILES", "true"),
-        choices=["true", "false"],
-        help="Use enhanced files (with FPD config) instead of regular batch files",
+        action="store_true",
+        default=os.getenv("USE_ENHANCED_FILES", "false").lower() == "true",
+        help="Use enhanced files instead of batch files",
     )
     parser.add_argument("--wp-api-url", default=os.getenv("WP_API_URL"), required=True)
     parser.add_argument("--wp-api-key", default=os.getenv("WP_API_KEY"), required=True)
@@ -196,7 +176,7 @@ def main():
     args = parser.parse_args()
 
     # Convert string to boolean
-    use_enhanced_files = args.use_enhanced_files.lower() == "true"
+    use_enhanced_files = args.use_enhanced_files
 
     # Validate required arguments
     if (
@@ -316,49 +296,36 @@ def main():
         args.mode,
     )
 
-    # Determine source directory based on enhanced files preference
+    # Determine which directory and file pattern to use
     if use_enhanced_files:
-        source_dir = "enhanced"
+        import_dir = "enhanced"
         file_pattern = "*_enhanced.jsonl"
-        print(f"📁 Using enhanced files from {source_dir}/ directory")
+        print("📁 Using enhanced files for import")
     else:
-        source_dir = bp.batch_dir
+        import_dir = bp.batch_dir
         file_pattern = f"{bp.batch_prefix}*.jsonl"
-        print(f"📁 Using regular batch files from {source_dir}/ directory")
+        print("📁 Using batch files for import")
 
-    # Check if source directory exists
-    if not os.path.exists(source_dir):
-        print(f"❌ Error: Source directory '{source_dir}' does not exist")
-        print(
-            f"   Available directories: {[d for d in os.listdir('.') if os.path.isdir(d)]}"
-        )
-        sys.exit(1)
-
-    # Iterate batches and lines, resuming as needed
-    batch_files = [
+    # Iterate files and lines, resuming as needed
+    import_files = [
         f
-        for f in sorted(os.listdir(source_dir))
+        for f in sorted(os.listdir(import_dir))
         if f.endswith(".jsonl")
         and (
-            (use_enhanced_files and "_enhanced" in f)
-            or (not use_enhanced_files and f.startswith(bp.batch_prefix))
+            use_enhanced_files
+            and "_enhanced.jsonl" in f
+            or not use_enhanced_files
+            and f.startswith(bp.batch_prefix)
         )
     ]
 
-    print(f"📁 Found {len(batch_files)} files to process in {source_dir}/")
+    print(f"📁 Found {len(import_files)} files to process")
 
-    if not batch_files:
-        print(f"❌ No files found matching pattern '{file_pattern}' in {source_dir}/")
-        print(
-            f"   Available files in {source_dir}/: {os.listdir(source_dir) if os.path.exists(source_dir) else 'Directory not found'}"
-        )
-        sys.exit(1)
-
-    for batch_file in batch_files:
-        batch_path = os.path.join(source_dir, batch_file)
+    for batch_file in import_files:
+        batch_path = os.path.join(import_dir, batch_file)
         skip_lines = batch_line_map.get(batch_file, 0)
 
-        print(f"📄 Processing file: {batch_file}")
+        print(f"📄 Processing batch file: {batch_file}")
 
         with open(batch_path, "r") as f:
             for line_num, line in enumerate(f, 1):
