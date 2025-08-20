@@ -26,10 +26,10 @@ def create_retry_session():
     """Create a requests session with retry logic for Cloudflare protection."""
     session = requests.Session()
     
-    # Configure retry strategy
+    # Configure retry strategy (increased for better Cloudflare bypass)
     retry_strategy = Retry(
-        total=3,  # number of retries
-        backoff_factor=1,  # wait 1, 2, 4 seconds between retries
+        total=5,  # more retries
+        backoff_factor=2,  # wait 2, 4, 8 seconds between retries
         status_forcelist=[403, 429, 500, 502, 503, 504],  # retry on these status codes
         allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "TRACE"]
     )
@@ -98,14 +98,19 @@ def fetch_existing_products(
     # Add Cloudflare bypass headers for staging/production environments
     headers = {"X-API-Key": wp_api_key}
     
-    # Add browser-like headers to bypass Cloudflare protection
+    # Add comprehensive browser-like headers to bypass Cloudflare protection
     headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1"
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
     })
     
     auth = (
@@ -153,14 +158,19 @@ def import_product_to_wp(
     # Add Cloudflare bypass headers for staging/production environments
     headers = {"Content-Type": "application/json", "X-API-Key": wp_api_key}
     
-    # Add browser-like headers to bypass Cloudflare protection
+    # Add comprehensive browser-like headers to bypass Cloudflare protection
     headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1"
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
     })
     
     auth = (
@@ -185,7 +195,7 @@ def import_product_to_wp(
             json=product,
             headers=headers,
             auth=auth,
-            timeout=30,
+            timeout=60,  # Increased timeout for better reliability
         )
         
         # Debug: Show response details
@@ -197,8 +207,8 @@ def import_product_to_wp(
         
         resp.raise_for_status()
         
-        # Add small delay to avoid triggering Cloudflare rate limiting
-        time.sleep(0.5)
+        # Add longer delay to avoid triggering Cloudflare rate limiting
+        time.sleep(2)  # Increased delay for better Cloudflare bypass
         
         return resp.json()
     except requests.exceptions.RequestException as e:
