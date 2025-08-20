@@ -68,19 +68,12 @@ def fetch_existing_products(
             "WordPress API URL is required but not provided or is empty/null"
         )
 
-    # Extract base URL from the upload URL
-    base_url = wp_api_url.replace("/wp-json/promostandards-importer/v1/upload", "")
-
+    # Construct the correct endpoint URL
     if wp_api_url.endswith("/upload"):
         existing_url = wp_api_url.replace("/upload", "/existing-products")
     else:
-        # fallback, just append
+        # Ensure we have the full API URL
         existing_url = wp_api_url.rstrip("/") + "/existing-products"
-
-    # Use the correct endpoint URL
-    # existing_url = (
-    #     base_url.rstrip("/") + "/wp-json/promostandards-importer/v1/existing-products"
-    # )
     headers = {"X-API-Key": wp_api_key}
     auth = (
         (basic_auth_user, basic_auth_pass)
@@ -115,10 +108,11 @@ def import_product_to_wp(
             "WordPress API URL is required but not provided or is empty/null"
         )
 
-    # Use the import-product endpoint
+    # Construct the correct import-product endpoint URL
     if wp_api_url.endswith("/upload"):
         import_url = wp_api_url.replace("/upload", "/import-product")
     else:
+        # Ensure we have the full API URL
         import_url = wp_api_url.rstrip("/") + "/import-product"
 
     headers = {"Content-Type": "application/json", "X-API-Key": wp_api_key}
