@@ -15,9 +15,30 @@ import logging
 import time
 from datetime import datetime
 from espscraper.batch_processor import BatchProcessor
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 PROGRESS_FILE = "import_progress.json"
 HEARTBEAT_FILE = "import_heartbeat.json"
+
+
+def create_retry_session():
+    """Create a requests session with retry logic for Cloudflare protection."""
+    session = requests.Session()
+    
+    # Configure retry strategy
+    retry_strategy = Retry(
+        total=3,  # number of retries
+        backoff_factor=1,  # wait 1, 2, 4 seconds between retries
+        status_forcelist=[403, 429, 500, 502, 503, 504],  # retry on these status codes
+        allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "TRACE"]
+    )
+    
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    return session
 
 
 def load_progress():
@@ -74,7 +95,19 @@ def fetch_existing_products(
     else:
         # Ensure we have the full API URL
         existing_url = wp_api_url.rstrip("/") + "/existing-products"
+    # Add Cloudflare bypass headers for staging/production environments
     headers = {"X-API-Key": wp_api_key}
+    
+    # Add browser-like headers to bypass Cloudflare protection
+    headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
+    })
+    
     auth = (
         (basic_auth_user, basic_auth_pass)
         if basic_auth_user
@@ -84,7 +117,9 @@ def fetch_existing_products(
         else None
     )
     try:
-        resp = requests.get(existing_url, headers=headers, auth=auth, timeout=30)
+        # Use retry session for better handling of Cloudflare protection
+        session = create_retry_session()
+        resp = session.get(existing_url, headers=headers, auth=auth, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         existing = {}
@@ -115,23 +150,64 @@ def import_product_to_wp(
         # Ensure we have the full API URL
         import_url = wp_api_url.rstrip("/") + "/import-product"
 
+    # Add Cloudflare bypass headers for staging/production environments
     headers = {"Content-Type": "application/json", "X-API-Key": wp_api_key}
+    
+    # Add browser-like headers to bypass Cloudflare protection
+    headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
+    })
+    
     auth = (
         (basic_auth_user, basic_auth_pass)
         if basic_auth_user and basic_auth_pass
         else None
     )
+    
+    # Debug: Show what we're about to send
+    print(f"🔍 Debug: Import request details")
+    print(f"  URL: {import_url}")
+    print(f"  Headers: {headers}")
+    print(f"  Auth: {auth}")
+    print(f"  Product ID: {product.get('product_id', 'unknown')}")
+    print(f"  Product Name: {product.get('name', 'unknown')}")
+    
     try:
-        resp = requests.post(
+        # Use retry session for better handling of Cloudflare protection
+        session = create_retry_session()
+        resp = session.post(
             import_url,
             json=product,
             headers=headers,
             auth=auth,
             timeout=30,
         )
+        
+        # Debug: Show response details
+        print(f"🔍 Debug: Response details")
+        print(f"  Status Code: {resp.status_code}")
+        print(f"  Response Headers: {dict(resp.headers)}")
+        print(f"  Response Content (first 500 chars): {resp.text[:500]}")
+        print(f"  Content Encoding: {resp.headers.get('Content-Encoding', 'none')}")
+        
         resp.raise_for_status()
+        
+        # Add small delay to avoid triggering Cloudflare rate limiting
+        time.sleep(0.5)
+        
         return resp.json()
     except requests.exceptions.RequestException as e:
+        print(f"🔍 Debug: Request exception details")
+        print(f"  Exception type: {type(e).__name__}")
+        print(f"  Exception message: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"  Response status: {e.response.status_code}")
+            print(f"  Response content: {e.response.text[:500]}")
         raise Exception(f"Failed to import product: {str(e)}")
 
 

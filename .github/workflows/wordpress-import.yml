@@ -279,16 +279,27 @@ jobs:
           echo "WP_BASE_URL: $WP_BASE_URL"
           echo "WP_BASIC_AUTH_USER: $WP_BASIC_AUTH_USER"
 
-          # Build curl command conditionally based on environment
-          CURL_CMD="curl -s -w \"\\n%{http_code}\""
-          
-          # Only add Basic Auth if we're in development environment and credentials are available
-          if [ "${{ github.event.inputs.environment || 'dev' }}" = "dev" ] && [ -n "${{ secrets.WP_BASIC_AUTH_USER }}" ] && [ -n "${{ secrets.WP_BASIC_AUTH_PASS }}" ]; then
-            CURL_CMD="$CURL_CMD -u \"${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}\""
-            echo "🔐 Using Basic Auth for development environment"
-          else
-            echo "🌐 No Basic Auth needed for this environment"
-          fi
+                        # Build curl command conditionally based on environment
+              CURL_CMD="curl -s -w \"\\n%{http_code}\""
+              
+              # Add Cloudflare bypass headers for staging/production
+              if [ "${{ github.event.inputs.environment || 'dev' }}" != "dev" ]; then
+                CURL_CMD="$CURL_CMD -H \"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36\""
+                CURL_CMD="$CURL_CMD -H \"Accept: application/json, text/plain, */*\""
+                CURL_CMD="$CURL_CMD -H \"Accept-Language: en-US,en;q=0.9\""
+                CURL_CMD="$CURL_CMD -H \"Accept-Encoding: gzip, deflate, br\""
+                CURL_CMD="$CURL_CMD -H \"Connection: keep-alive\""
+                CURL_CMD="$CURL_CMD -H \"Upgrade-Insecure-Requests: 1\""
+                echo "🛡️ Added Cloudflare bypass headers for staging/production"
+              fi
+              
+              # Only add Basic Auth if we're in development environment and credentials are available
+              if [ "${{ github.event.inputs.environment || 'dev' }}" = "dev" ] && [ -n "${{ secrets.WP_BASIC_AUTH_USER }}" ] && [ -n "${{ secrets.WP_BASIC_AUTH_PASS }}" ]; then
+                CURL_CMD="$CURL_CMD -u \"${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}\""
+                echo "🔐 Using Basic Auth for development environment"
+              else
+                echo "🌐 No Basic Auth needed for this environment"
+              fi
 
           # Execute the curl command with verbose output
           echo "🔍 Executing curl command..."
@@ -463,6 +474,31 @@ jobs:
           fi
           
           echo "Running command: $CMD"
+          
+          # Add debugging before running the import
+          echo "🔍 Debug: Pre-import API test"
+          echo "Testing API endpoint before import..."
+          
+          # Test the API endpoint that will be used
+          TEST_URL="$WP_API_URL/existing-products"
+          echo "Testing URL: $TEST_URL"
+          echo "API Key: ${WP_API_KEY:0:10}..."
+          
+          # Test with curl to see what happens
+          CURL_TEST_CMD="curl -s -w \"\\n%{http_code}\" -H \"X-API-Key: $WP_API_KEY\" \"$TEST_URL\""
+          echo "Test command: $CURL_TEST_CMD"
+          
+          test_response=$(eval $CURL_TEST_CMD)
+          test_http_code=$(echo "$test_response" | tail -n1 | tr -d '\n\r"')
+          test_body=$(echo "$test_response" | sed '$d')
+          
+          echo "Test HTTP Status: $test_http_code"
+          echo "Test Response preview:"
+          echo "$test_body" | head -c 500
+          echo ""
+          
+          # Now run the actual import
+          echo "🔍 Running actual import..."
           eval $CMD
         env:
           WP_API_URL: ${{ env.WP_API_URL }}
