@@ -306,7 +306,8 @@ jobs:
             echo "✅ Successfully fetched parameters from WordPress"
           else
             echo '{"api_url": "", "api_key": ""}' > params.json
-            echo "⚠️ Failed to fetch from WordPress (HTTP $http_code), using defaults"
+            echo "⚠️ Failed to fetch from WordPress (HTTP $http_code), using fallback configuration"
+            echo "This is expected for staging/production sites with Cloudflare protection"
           fi
 
           # Validate JSON and extract values
@@ -317,15 +318,21 @@ jobs:
             echo "Extracted API URL: $WP_API_URL_FROM_WP"
             echo "Extracted API Key: ${WP_API_KEY_FROM_WP:0:10}..."
 
-            # Use WordPress values if not empty, otherwise use input parameters
-            if [ "$WP_API_URL_FROM_WP" != "" ] && [ "$WP_API_URL_FROM_WP" != "null" ]; then
+            # Use WordPress values if not empty and correct, otherwise use fallback
+            if [ "$WP_API_URL_FROM_WP" != "" ] && [ "$WP_API_URL_FROM_WP" != "null" ] && [[ "$WP_API_URL_FROM_WP" != *"/upload" ]]; then
               echo "WP_API_URL=$WP_API_URL_FROM_WP" >> $GITHUB_ENV
               echo "WP_API_KEY=$WP_API_KEY_FROM_WP" >> $GITHUB_ENV
               echo "✅ Using WordPress configuration"
             else
               echo "WP_API_URL=$WP_BASE_URL/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
               echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
-              echo "⚠️ Using fallback configuration (WordPress returned empty values)"
+              if [[ "$WP_API_URL_FROM_WP" == *"/upload" ]]; then
+                echo "⚠️ Using fallback configuration (WordPress returned /upload URL)"
+              else
+                echo "⚠️ Using fallback configuration (WordPress returned empty values)"
+              fi
+              echo "Fallback API URL: $WP_BASE_URL/wp-json/promostandards-importer/v1"
+              echo "Fallback API Key: ${{ secrets.WP_API_KEY }}"
             fi
           else
             echo "❌ Invalid JSON response, using fallback configuration"
