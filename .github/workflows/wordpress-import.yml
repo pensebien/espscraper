@@ -241,25 +241,59 @@ jobs:
       - name: Fetch API URL and Key from WordPress (Optional)
         id: get_params
         run: |
-          # Try to fetch from WordPress, but don't fail if it doesn't work
-          curl -s -u "${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}" "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}" > params.json || echo '{"api_url": "", "api_key": ""}' > params.json
+          echo "=== Fetching API parameters from WordPress ==="
+          echo "WP_BASE_URL: $WP_BASE_URL"
+          echo "WP_BASIC_AUTH_USER: $WP_BASIC_AUTH_USER"
 
-          # Use WordPress values if available, otherwise use input parameters
-          WP_API_URL_FROM_WP=$(jq -r .api_url params.json)
-          WP_API_KEY_FROM_WP=$(jq -r .api_key params.json)
+          # Try to fetch from WordPress with better error handling
+          response=$(curl -s -w "\n%{http_code}" -u "${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}" "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}")
 
-          # Use WordPress values if not empty, otherwise use input parameters
-          if [ "$WP_API_URL_FROM_WP" != "" ] && [ "$WP_API_URL_FROM_WP" != "null" ]; then
-            echo "WP_API_URL=$WP_API_URL_FROM_WP" >> $GITHUB_ENV
-            echo "WP_API_KEY=$WP_API_KEY_FROM_WP" >> $GITHUB_ENV
-            echo "Using WordPress configuration"
+          # Extract HTTP status code and response body
+          http_code=$(echo "$response" | tail -n1 | tr -d '\n\r"')
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP Status: $http_code"
+          echo "Response: $body"
+
+          # Check if we got a successful response (200-299)
+          if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+            echo "$body" > params.json
+            echo "✅ Successfully fetched parameters from WordPress"
           else
-            echo "WP_API_URL=${{ github.event.inputs.wp_api_url }}" >> $GITHUB_ENV
-            echo "WP_API_KEY=${{ github.event.inputs.wp_api_key }}" >> $GITHUB_ENV
-            echo "Using input parameters"
+            echo '{"api_url": "", "api_key": ""}' > params.json
+            echo "⚠️ Failed to fetch from WordPress (HTTP $http_code), using defaults"
           fi
 
-          echo "WordPress integration status: $(jq -r .api_url params.json | grep -q '^$' && echo 'Not configured' || echo 'Configured')"
+          # Validate JSON and extract values
+          if jq empty params.json 2>/dev/null; then
+            WP_API_URL_FROM_WP=$(jq -r .api_url params.json)
+            WP_API_KEY_FROM_WP=$(jq -r .api_key params.json)
+
+            echo "Extracted API URL: $WP_API_URL_FROM_WP"
+            echo "Extracted API Key: ${WP_API_KEY_FROM_WP:0:10}..."
+
+            # Use WordPress values if not empty, otherwise use input parameters
+            if [ "$WP_API_URL_FROM_WP" != "" ] && [ "$WP_API_URL_FROM_WP" != "null" ]; then
+              echo "WP_API_URL=$WP_API_URL_FROM_WP" >> $GITHUB_ENV
+              echo "WP_API_KEY=$WP_API_KEY_FROM_WP" >> $GITHUB_ENV
+              echo "✅ Using WordPress configuration"
+            else
+              echo "WP_API_URL=$WP_BASE_URL/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
+              echo "WP_API_KEY=${{ secrets.WP_API_SECRET }}" >> $GITHUB_ENV
+              echo "⚠️ Using fallback configuration (WordPress returned empty values)"
+            fi
+          else
+            echo "❌ Invalid JSON response, using fallback configuration"
+            echo "WP_API_URL=$WP_BASE_URL/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
+            echo "WP_API_KEY=${{ secrets.WP_API_SECRET }}" >> $GITHUB_ENV
+          fi
+
+          # Check WordPress integration status
+          if [ "$WP_API_URL_FROM_WP" != "" ] && [ "$WP_API_URL_FROM_WP" != "null" ]; then
+            echo "✅ WordPress integration: Configured"
+          else
+            echo "⚠️ WordPress integration: Not configured"
+          fi
         env:
           WP_BASE_URL: ${{ env.WP_BASE_URL }}
 
