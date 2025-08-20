@@ -245,8 +245,19 @@ jobs:
           echo "WP_BASE_URL: $WP_BASE_URL"
           echo "WP_BASIC_AUTH_USER: $WP_BASIC_AUTH_USER"
 
-          # Try to fetch from WordPress with better error handling
-          response=$(curl -s -w "\n%{http_code}" -u "${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}" "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}")
+          # Build curl command conditionally based on environment
+          CURL_CMD="curl -s -w \"\\n%{http_code}\""
+          
+          # Only add Basic Auth if we're in development environment and credentials are available
+          if [ "${{ github.event.inputs.environment || 'dev' }}" = "dev" ] && [ -n "${{ secrets.WP_BASIC_AUTH_USER }}" ] && [ -n "${{ secrets.WP_BASIC_AUTH_PASS }}" ]; then
+            CURL_CMD="$CURL_CMD -u \"${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}\""
+            echo "🔐 Using Basic Auth for development environment"
+          else
+            echo "🌐 No Basic Auth needed for this environment"
+          fi
+
+          # Execute the curl command
+          response=$($CURL_CMD "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}")
 
           # Extract HTTP status code and response body
           http_code=$(echo "$response" | tail -n1 | tr -d '\n\r"')
@@ -346,14 +357,24 @@ jobs:
           ls -la batch/*.jsonl 2>/dev/null || echo "No batch files found"
           echo "=== Running Import Script ==="
 
-          python3 import_to_wordpress.py \
+          # Build command with conditional Basic Auth
+          CMD="python3 import_to_wordpress.py \
             --mode ${{ github.event.inputs.mode || 'sync' }} \
             --product-limit ${{ github.event.inputs.product_limit || '100' }} \
             ${{ github.event.inputs.use_enhanced_files == 'true' && '--use-enhanced-files' || '' }} \
-            --wp-api-url "$WP_API_URL" \
-            --wp-api-key "$WP_API_KEY" \
-            --wp-basic-auth-user "$WP_BASIC_AUTH_USER" \
-            --wp-basic-auth-pass "$WP_BASIC_AUTH_PASS"
+            --wp-api-url \"$WP_API_URL\" \
+            --wp-api-key \"$WP_API_KEY\""
+          
+          # Only add Basic Auth if we're in development environment and credentials are available
+          if [ "${{ github.event.inputs.environment || 'dev' }}" = "dev" ] && [ -n "$WP_BASIC_AUTH_USER" ] && [ -n "$WP_BASIC_AUTH_PASS" ]; then
+            CMD="$CMD --wp-basic-auth-user \"$WP_BASIC_AUTH_USER\" --wp-basic-auth-pass \"$WP_BASIC_AUTH_PASS\""
+            echo "🔐 Adding Basic Auth for development environment"
+          else
+            echo "🌐 No Basic Auth needed for this environment"
+          fi
+          
+          echo "Running command: $CMD"
+          eval $CMD
         env:
           WP_API_URL: ${{ env.WP_API_URL }}
           WP_API_KEY: ${{ env.WP_API_KEY }}

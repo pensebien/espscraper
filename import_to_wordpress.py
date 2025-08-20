@@ -231,6 +231,10 @@ def main():
             "   Please provide --wp-basic-auth-user parameter or set WP_BASIC_AUTH_USER environment variable"
         )
         sys.exit(1)
+    
+    # If neither Basic Auth credential is provided, that's fine - some environments don't need it
+    if not args.wp_basic_auth_user and not args.wp_basic_auth_pass:
+        print("🌐 No Basic Auth credentials provided - this is fine for staging/production environments")
 
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
