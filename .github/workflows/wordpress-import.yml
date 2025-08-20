@@ -248,7 +248,7 @@ jobs:
           if [ -z "$WP_BASE_URL" ]; then
             echo "⚠️ WP_BASE_URL still empty, setting fallback values based on environment"
             if [ "${{ github.event.inputs.environment || 'dev' }}" = "staging" ]; then
-              echo "WP_BASE_URL=https://tmgdev.dedicatedmkt.com/" >> $GITHUB_ENV
+              echo "WP_BASE_URL=https://tmgdev.dedicatedmkt.com" >> $GITHUB_ENV
               echo "WP_API_URL=https://tmgdev.dedicatedmkt.com/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
               echo "✅ Set staging URLs as fallback"
             elif [ "${{ github.event.inputs.environment || 'dev' }}" = "prod" ]; then
