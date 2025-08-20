@@ -250,15 +250,18 @@ jobs:
             if [ "${{ github.event.inputs.environment || 'dev' }}" = "staging" ]; then
               echo "WP_BASE_URL=https://tmgdev.dedicatedmkt.com" >> $GITHUB_ENV
               echo "WP_API_URL=https://tmgdev.dedicatedmkt.com/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
-              echo "✅ Set staging URLs as fallback"
+              echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
+              echo "✅ Set staging URLs and API key as fallback"
             elif [ "${{ github.event.inputs.environment || 'dev' }}" = "prod" ]; then
               echo "WP_BASE_URL=https://tmg.dedicatedmkt.com" >> $GITHUB_ENV
               echo "WP_API_URL=https://tmg.dedicatedmkt.com/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
-              echo "✅ Set production URLs as fallback"
+              echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
+              echo "✅ Set production URLs and API key as fallback"
             else
               echo "WP_BASE_URL=https://unwritten-bottle.localsite.io" >> $GITHUB_ENV
               echo "WP_API_URL=https://unwritten-bottle.localsite.io/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
-              echo "✅ Set development URLs as fallback"
+              echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
+              echo "✅ Set development URLs and API key as fallback"
             fi
           fi
 
@@ -321,13 +324,13 @@ jobs:
               echo "✅ Using WordPress configuration"
             else
               echo "WP_API_URL=$WP_BASE_URL/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
-              echo "WP_API_KEY=${{ secrets.WP_API_SECRET }}" >> $GITHUB_ENV
+              echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
               echo "⚠️ Using fallback configuration (WordPress returned empty values)"
             fi
           else
             echo "❌ Invalid JSON response, using fallback configuration"
             echo "WP_API_URL=$WP_BASE_URL/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
-            echo "WP_API_KEY=${{ secrets.WP_API_SECRET }}" >> $GITHUB_ENV
+            echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
           fi
 
           # Check WordPress integration status
