@@ -193,10 +193,23 @@ jobs:
       - name: Load Environment Variables
         run: |
           echo "Loading environment variables..."
-
+          echo "Current directory: $(pwd)"
+          echo "Environment input: ${{ github.event.inputs.environment || 'dev' }}"
+          echo "Looking for .env file: .env.${{ github.event.inputs.environment || 'dev' }}"
+          
+          # List all files in current directory
+          echo "=== Files in current directory ==="
+          ls -la | head -20
+          echo "=== .env files ==="
+          ls -la .env* 2>/dev/null || echo "No .env files found"
+          
           # Check for environment-specific .env file first
           if [ -f ".env.${{ github.event.inputs.environment || 'dev' }}" ]; then
             echo "✅ Loading from .env.${{ github.event.inputs.environment || 'dev' }}"
+            echo "File content:"
+            cat ".env.${{ github.event.inputs.environment || 'dev' }}"
+            echo "=== End file content ==="
+            
             # Read the file and set variables in GITHUB_ENV
             while IFS= read -r line; do
               # Skip comments and empty lines
@@ -229,6 +242,24 @@ jobs:
             echo "WP_BASE_URL=${{ secrets.WP_BASE_URL }}" >> $GITHUB_ENV
           else
             echo "Using WP_BASE_URL from .env: $WP_BASE_URL"
+          fi
+          
+          # Fallback: Set environment-specific URLs if .env loading failed
+          if [ -z "$WP_BASE_URL" ]; then
+            echo "⚠️ WP_BASE_URL still empty, setting fallback values based on environment"
+            if [ "${{ github.event.inputs.environment || 'dev' }}" = "staging" ]; then
+              echo "WP_BASE_URL=https://tmgdev.dedicatedmkt.com/" >> $GITHUB_ENV
+              echo "WP_API_URL=https://tmgdev.dedicatedmkt.com/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
+              echo "✅ Set staging URLs as fallback"
+            elif [ "${{ github.event.inputs.environment || 'dev' }}" = "prod" ]; then
+              echo "WP_BASE_URL=https://tmg.dedicatedmkt.com" >> $GITHUB_ENV
+              echo "WP_API_URL=https://tmg.dedicatedmkt.com/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
+              echo "✅ Set production URLs as fallback"
+            else
+              echo "WP_BASE_URL=https://unwritten-bottle.localsite.io" >> $GITHUB_ENV
+              echo "WP_API_URL=https://unwritten-bottle.localsite.io/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
+              echo "✅ Set development URLs as fallback"
+            fi
           fi
 
           # Debug: Show what we loaded
