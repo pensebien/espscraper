@@ -290,7 +290,10 @@ jobs:
             echo "🌐 No Basic Auth needed for this environment"
           fi
 
-          # Execute the curl command
+          # Execute the curl command with verbose output
+          echo "🔍 Executing curl command..."
+          echo "Command: $CURL_CMD \"$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}\""
+          
           response=$($CURL_CMD "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}")
 
           # Extract HTTP status code and response body
@@ -298,7 +301,17 @@ jobs:
           body=$(echo "$response" | sed '$d')
 
           echo "HTTP Status: $http_code"
-          echo "Response: $body"
+          echo "Response length: ${#body} characters"
+          echo "Response preview (first 500 chars):"
+          echo "$body" | head -c 500
+          echo ""
+          echo "Response preview (last 500 chars):"
+          echo "$body" | tail -c 500
+          echo ""
+          
+          # Save full response for debugging
+          echo "$body" > full_response.txt
+          echo "Full response saved to full_response.txt"
 
           # Check if we got a successful response (200-299)
           if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
@@ -310,14 +323,44 @@ jobs:
             echo "This is expected for staging/production sites with Cloudflare protection"
           fi
 
-          # Validate JSON and extract values
+          # Debug: Show what we're trying to parse
+          echo "🔍 Debug: JSON parsing attempt"
+          echo "params.json content:"
+          cat params.json
+          echo ""
+          
+          # Test JSON validity
+          echo "🔍 Testing JSON validity with jq..."
           if jq empty params.json 2>/dev/null; then
-            WP_API_URL_FROM_WP=$(jq -r .api_url params.json)
-            WP_API_KEY_FROM_WP=$(jq -r .api_key params.json)
+            echo "✅ JSON is valid"
+          else
+            echo "❌ JSON is invalid"
+            echo "jq error output:"
+            jq empty params.json 2>&1 || true
+          fi
 
-            echo "Extracted API URL: $WP_API_URL_FROM_WP"
-            echo "Extracted API Key: ${WP_API_KEY_FROM_WP:0:10}..."
+                      # Validate JSON and extract values
+            if jq empty params.json 2>/dev/null; then
+              echo "🔍 Extracting values from JSON..."
+              WP_API_URL_FROM_WP=$(jq -r .api_url params.json)
+              WP_API_KEY_FROM_WP=$(jq -r .api_key params.json)
 
+              echo "Extracted API URL: '$WP_API_URL_FROM_WP'"
+              echo "Extracted API Key: '${WP_API_KEY_FROM_WP:0:10}...'"
+              
+              # Debug: Show the exact jq commands and their output
+              echo "🔍 Debug: jq extraction details"
+              echo "jq -r .api_url params.json output: '$(jq -r .api_url params.json)'"
+              echo "jq -r .api_key params.json output: '$(jq -r .api_key params.json)'"
+
+            # Debug: Show decision logic
+            echo "🔍 Debug: Configuration decision logic"
+            echo "WP_API_URL_FROM_WP: '$WP_API_URL_FROM_WP'"
+            echo "WP_API_KEY_FROM_WP: '${WP_API_KEY_FROM_WP:0:10}...'"
+            echo "WP_API_URL_FROM_WP != \"\": $([ "$WP_API_URL_FROM_WP" != "" ] && echo "true" || echo "false")"
+            echo "WP_API_URL_FROM_WP != \"null\": $([ "$WP_API_URL_FROM_WP" != "null" ] && echo "true" || echo "false")"
+            echo "WP_API_URL_FROM_WP != *\"/upload\": $([[ "$WP_API_URL_FROM_WP" != *"/upload" ]] && echo "true" || echo "false")"
+            
             # Use WordPress values if not empty and correct, otherwise use fallback
             if [ "$WP_API_URL_FROM_WP" != "" ] && [ "$WP_API_URL_FROM_WP" != "null" ] && [[ "$WP_API_URL_FROM_WP" != *"/upload" ]]; then
               echo "WP_API_URL=$WP_API_URL_FROM_WP" >> $GITHUB_ENV
@@ -341,6 +384,11 @@ jobs:
           fi
 
           # Check WordPress integration status
+          echo "🔍 Debug: Final WordPress integration check"
+          echo "WP_API_URL_FROM_WP: '$WP_API_URL_FROM_WP'"
+          echo "WP_API_URL_FROM_WP != \"\": $([ "$WP_API_URL_FROM_WP" != "" ] && echo "true" || echo "false")"
+          echo "WP_API_URL_FROM_WP != \"null\": $([ "$WP_API_URL_FROM_WP" != "null" ] && echo "true" || echo "false")"
+          
           if [ "$WP_API_URL_FROM_WP" != "" ] && [ "$WP_API_URL_FROM_WP" != "null" ]; then
             echo "✅ WordPress integration: Configured"
           else
