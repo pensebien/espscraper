@@ -26,11 +26,11 @@ def create_retry_session():
     """Create a requests session with retry logic for Cloudflare protection."""
     session = requests.Session()
     
-    # Configure retry strategy (more aggressive for Cloudflare)
+    # Configure retry strategy (more conservative to avoid triggering Cloudflare)
     retry_strategy = Retry(
-        total=3,  # fewer retries to avoid overwhelming Cloudflare
-        backoff_factor=3,  # longer delays: 3, 6, 9 seconds
-        status_forcelist=[403, 429, 500, 502, 503, 504],
+        total=1,  # only 1 retry to avoid overwhelming Cloudflare
+        backoff_factor=5,  # wait 5 seconds before retry
+        status_forcelist=[429, 500, 502, 503, 504],  # don't retry on 403
         allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "TRACE"]
     )
     
@@ -215,7 +215,7 @@ def import_product_to_wp(
         resp.raise_for_status()
         
         # Add longer delay to avoid triggering Cloudflare rate limiting
-        time.sleep(2)  # Increased delay for better Cloudflare bypass
+        time.sleep(3)  # Increased delay for better Cloudflare bypass
         
         return resp.json()
     except requests.exceptions.RequestException as e:
@@ -225,6 +225,14 @@ def import_product_to_wp(
         if hasattr(e, 'response') and e.response is not None:
             print(f"  Response status: {e.response.status_code}")
             print(f"  Response content: {e.response.text[:500]}")
+            
+            # Special handling for 403 errors
+            if e.response.status_code == 403:
+                print(f"  🛡️ Cloudflare 403 detected - this might be temporary")
+                print(f"  💡 Consider increasing delays or using different headers")
+                # Don't raise immediately, let the retry logic handle it
+                time.sleep(5)  # Wait 5 seconds before continuing
+                
         raise Exception(f"Failed to import product: {str(e)}")
 
 
