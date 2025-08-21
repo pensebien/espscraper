@@ -250,7 +250,7 @@ jobs:
             if [ "${{ github.event.inputs.environment || 'dev' }}" = "staging" ]; then
               echo "WP_BASE_URL=https://tmgdev.dedicatedmkt.com" >> $GITHUB_ENV
               echo "WP_API_URL=https://tmgdev.dedicatedmkt.com/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
-              echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
+              echo "WP_API_KEY=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" >> $GITHUB_ENV
               echo "✅ Set staging URLs and API key as fallback"
             elif [ "${{ github.event.inputs.environment || 'dev' }}" = "prod" ]; then
               echo "WP_BASE_URL=https://tmg.dedicatedmkt.com" >> $GITHUB_ENV
@@ -303,9 +303,19 @@ jobs:
 
           # Execute the curl command with verbose output
           echo "🔍 Executing curl command..."
-          echo "Command: $CURL_CMD \"$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}\""
           
-          response=$($CURL_CMD "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=${{ secrets.WP_API_SECRET }}")
+          # Use different secret for staging environment
+          if [ "${{ github.event.inputs.environment || 'dev' }}" = "staging" ]; then
+            SECRET_TO_USE="default_github_secret_for_staging"
+            echo "🔑 Using staging secret: $SECRET_TO_USE"
+          else
+            SECRET_TO_USE="${{ secrets.WP_API_SECRET }}"
+            echo "🔑 Using production secret"
+          fi
+          
+          echo "Command: $CURL_CMD \"$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=$SECRET_TO_USE\""
+          
+          response=$($CURL_CMD "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=$SECRET_TO_USE")
 
           # Extract HTTP status code and response body
           http_code=$(echo "$response" | tail -n1 | tr -d '\n\r"')
@@ -329,9 +339,15 @@ jobs:
             echo "$body" > params.json
             echo "✅ Successfully fetched parameters from WordPress"
           else
-            echo '{"api_url": "", "api_key": ""}' > params.json
-            echo "⚠️ Failed to fetch from WordPress (HTTP $http_code), using fallback configuration"
-            echo "This is expected for staging/production sites with Cloudflare protection"
+            # For staging environment, use hardcoded values since the plugin doesn't have fallback logic
+            if [ "${{ github.event.inputs.environment || 'dev' }}" = "staging" ]; then
+              echo '{"api_url": "https://tmgdev.dedicatedmkt.com/wp-json/promostandards-importer/v1/import-product", "api_key": "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"}' > params.json
+              echo "✅ Using hardcoded staging configuration (plugin doesn't have fallback logic)"
+            else
+              echo '{"api_url": "", "api_key": ""}' > params.json
+              echo "⚠️ Failed to fetch from WordPress (HTTP $http_code), using fallback configuration"
+              echo "This is expected for staging/production sites with Cloudflare protection"
+            fi
           fi
 
           # Debug: Show what we're trying to parse

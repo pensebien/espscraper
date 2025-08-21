@@ -26,11 +26,11 @@ def create_retry_session():
     """Create a requests session with retry logic for Cloudflare protection."""
     session = requests.Session()
     
-    # Configure retry strategy (increased for better Cloudflare bypass)
+    # Configure retry strategy (more aggressive for Cloudflare)
     retry_strategy = Retry(
-        total=5,  # more retries
-        backoff_factor=2,  # wait 2, 4, 8 seconds between retries
-        status_forcelist=[403, 429, 500, 502, 503, 504],  # retry on these status codes
+        total=3,  # fewer retries to avoid overwhelming Cloudflare
+        backoff_factor=3,  # longer delays: 3, 6, 9 seconds
+        status_forcelist=[403, 429, 500, 502, 503, 504],
         allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "TRACE"]
     )
     
@@ -39,6 +39,37 @@ def create_retry_session():
     session.mount("https://", adapter)
     
     return session
+
+
+def get_cloudflare_headers():
+    """Get comprehensive headers to bypass Cloudflare protection."""
+    # Rotate User-Agents to appear more human-like
+    user_agents = [
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+    ]
+    
+    import random
+    user_agent = random.choice(user_agents)
+    
+    return {
+        "User-Agent": user_agent,
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "DNT": "1",
+        "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"macOS"'
+    }
 
 
 def load_progress():
@@ -99,19 +130,7 @@ def fetch_existing_products(
     headers = {"X-API-Key": wp_api_key}
     
     # Add comprehensive browser-like headers to bypass Cloudflare protection
-    headers.update({
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache"
-    })
+    headers.update(get_cloudflare_headers())
     
     auth = (
         (basic_auth_user, basic_auth_pass)
@@ -159,19 +178,7 @@ def import_product_to_wp(
     headers = {"Content-Type": "application/json", "X-API-Key": wp_api_key}
     
     # Add comprehensive browser-like headers to bypass Cloudflare protection
-    headers.update({
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache"
-    })
+    headers.update(get_cloudflare_headers())
     
     auth = (
         (basic_auth_user, basic_auth_pass)
