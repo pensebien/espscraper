@@ -72,6 +72,66 @@ def get_cloudflare_headers():
     }
 
 
+def create_cloudflare_session():
+    """Create a session that can bypass Cloudflare protection."""
+    session = requests.Session()
+    
+    # Set up headers that look more like a real browser
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Cache-Control": "max-age=0",
+        "DNT": "1",
+        "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"macOS"'
+    })
+    
+    return session
+
+def establish_cloudflare_session(base_url):
+    """Establish a session with Cloudflare by visiting the main site first."""
+    session = create_cloudflare_session()
+    
+    try:
+        print("🛡️ Establishing Cloudflare session...")
+        
+        # First, visit the main site to establish a session
+        main_response = session.get(f"{base_url}", timeout=30)
+        print(f"  Main site status: {main_response.status_code}")
+        
+        # Wait a bit to let Cloudflare process
+        time.sleep(3)
+        
+        # Then visit the WordPress admin to establish WordPress session
+        wp_admin_response = session.get(f"{base_url}/wp-admin", timeout=30)
+        print(f"  WP Admin status: {wp_admin_response.status_code}")
+        
+        # Wait again
+        time.sleep(2)
+        
+        # Finally, try to access the API base to establish API session
+        api_base = f"{base_url}/wp-json"
+        api_response = session.get(api_base, timeout=30)
+        print(f"  API base status: {api_response.status_code}")
+        
+        print("✅ Cloudflare session established")
+        return session
+        
+    except Exception as e:
+        print(f"⚠️ Could not establish Cloudflare session: {e}")
+        # Return a basic session as fallback
+        return create_cloudflare_session()
+
+
 def load_progress():
     if os.path.exists(PROGRESS_FILE):
         with open(PROGRESS_FILE, "r") as f:
@@ -120,6 +180,11 @@ def fetch_existing_products(
             "WordPress API URL is required but not provided or is empty/null"
         )
 
+    # Extract base URL for Cloudflare session
+    base_url = wp_api_url.replace("/wp-json/promostandards-importer/v1/import-product", "")
+    base_url = base_url.replace("/wp-json/promostandards-importer/v1/upload", "")
+    base_url = base_url.replace("/wp-json/promostandards-importer/v1", "")
+    
     # Construct the correct endpoint URL
     # Normalize the URL to avoid double-appending endpoints
     if wp_api_url.endswith("/upload"):
@@ -130,11 +195,9 @@ def fetch_existing_products(
     else:
         # Ensure we have the full API URL
         existing_url = wp_api_url.rstrip("/") + "/existing-products"
-    # Add Cloudflare bypass headers for staging/production environments
-    headers = {"X-API-Key": wp_api_key}
     
-    # Add comprehensive browser-like headers to bypass Cloudflare protection
-    headers.update(get_cloudflare_headers())
+    # Add API key header
+    headers = {"X-API-Key": wp_api_key}
     
     auth = (
         (basic_auth_user, basic_auth_pass)
@@ -144,10 +207,19 @@ def fetch_existing_products(
         and basic_auth_pass.strip()
         else None
     )
+    
     try:
-        # Use retry session for better handling of Cloudflare protection
-        session = create_retry_session()
-        resp = session.get(existing_url, headers=headers, auth=auth, timeout=30)
+        global _cloudflare_session, _base_url
+        
+        # Use global session if available and same base URL
+        if _cloudflare_session is None or _base_url != base_url:
+            _cloudflare_session = establish_cloudflare_session(base_url)
+            _base_url = base_url
+        
+        # Add API headers to the session
+        _cloudflare_session.headers.update(headers)
+        
+        resp = _cloudflare_session.get(existing_url, auth=auth, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         existing = {}
@@ -171,6 +243,11 @@ def import_product_to_wp(
             "WordPress API URL is required but not provided or is empty/null"
         )
 
+    # Extract base URL for Cloudflare session
+    base_url = wp_api_url.replace("/wp-json/promostandards-importer/v1/import-product", "")
+    base_url = base_url.replace("/wp-json/promostandards-importer/v1/upload", "")
+    base_url = base_url.replace("/wp-json/promostandards-importer/v1", "")
+
     # Construct the correct import-product endpoint URL
     # Normalize the URL to avoid double-appending endpoints
     if wp_api_url.endswith("/upload"):
@@ -182,11 +259,8 @@ def import_product_to_wp(
         # Ensure we have the full API URL
         import_url = wp_api_url.rstrip("/") + "/import-product"
 
-    # Add Cloudflare bypass headers for staging/production environments
+    # Add API headers
     headers = {"Content-Type": "application/json", "X-API-Key": wp_api_key}
-    
-    # Add comprehensive browser-like headers to bypass Cloudflare protection
-    headers.update(get_cloudflare_headers())
     
     auth = (
         (basic_auth_user, basic_auth_pass)
@@ -203,12 +277,19 @@ def import_product_to_wp(
     print(f"  Product Name: {product.get('name', 'unknown')}")
     
     try:
-        # Use retry session for better handling of Cloudflare protection
-        session = create_retry_session()
-        resp = session.post(
+        global _cloudflare_session, _base_url
+        
+        # Use global session if available and same base URL
+        if _cloudflare_session is None or _base_url != base_url:
+            _cloudflare_session = establish_cloudflare_session(base_url)
+            _base_url = base_url
+        
+        # Add API headers to the session
+        _cloudflare_session.headers.update(headers)
+        
+        resp = _cloudflare_session.post(
             import_url,
             json=product,
-            headers=headers,
             auth=auth,
             timeout=60,  # Increased timeout for better reliability
         )
@@ -243,6 +324,10 @@ def import_product_to_wp(
                 
         raise Exception(f"Failed to import product: {str(e)}")
 
+
+# Global session for Cloudflare bypass
+_cloudflare_session = None
+_base_url = None
 
 def main():
     import argparse

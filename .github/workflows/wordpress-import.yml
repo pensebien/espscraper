@@ -503,8 +503,8 @@ jobs:
           echo "Testing URL: $TEST_URL"
           echo "API Key: ${WP_API_KEY:0:10}..."
           
-          # Test with curl to see what happens
-          CURL_TEST_CMD="curl -s -w \"\\n%{http_code}\" -H \"X-API-Key: $WP_API_KEY\" \"$TEST_URL\""
+          # Test with curl to see what happens (with Cloudflare bypass headers)
+          CURL_TEST_CMD="curl -s -w \"\\n%{http_code}\" -H \"X-API-Key: $WP_API_KEY\" -H \"User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\" -H \"Accept: application/json, text/plain, */*\" -H \"Accept-Language: en-US,en;q=0.9\" -H \"Accept-Encoding: gzip, deflate, br\" -H \"Connection: keep-alive\" -H \"Upgrade-Insecure-Requests: 1\" -H \"Sec-Fetch-Dest: empty\" -H \"Sec-Fetch-Mode: cors\" -H \"Sec-Fetch-Site: same-origin\" -H \"Cache-Control: no-cache\" -H \"Pragma: no-cache\" \"$TEST_URL\""
           echo "Test command: $CURL_TEST_CMD"
           
           test_response=$(eval $CURL_TEST_CMD)
@@ -516,8 +516,36 @@ jobs:
           echo "$test_body" | head -c 500
           echo ""
           
+          # If we get a 403 with "Just a moment...", wait and retry
+          if [ "$test_http_code" = "403" ] && echo "$test_body" | grep -q "Just a moment"; then
+            echo "🛡️ Cloudflare protection detected, waiting 10 seconds and retrying..."
+            sleep 10
+            
+            # Retry with the same command
+            test_response=$(eval $CURL_TEST_CMD)
+            test_http_code=$(echo "$test_response" | tail -n1 | tr -d '\n\r"')
+            test_body=$(echo "$test_response" | sed '$d')
+            
+            echo "Retry HTTP Status: $test_http_code"
+            echo "Retry Response preview:"
+            echo "$test_body" | head -c 500
+            echo ""
+          fi
+          
           # Now run the actual import
           echo "🔍 Running actual import..."
+          
+          # If the pre-import test failed with Cloudflare, warn the user
+          if [ "$test_http_code" != "200" ]; then
+            echo "⚠️ Warning: Pre-import test failed (HTTP $test_http_code)"
+            echo "🛡️ This might be due to Cloudflare protection on the staging environment"
+            echo "💡 The import script has built-in Cloudflare bypass, so it might still work"
+            echo "📝 If this continues to fail, consider:"
+            echo "   1. Running the import locally instead of via GitHub Actions"
+            echo "   2. Temporarily disabling Cloudflare protection on staging"
+            echo "   3. Using a different approach for staging imports"
+          fi
+          
           eval $CMD
         env:
           WP_API_URL: ${{ env.WP_API_URL }}
