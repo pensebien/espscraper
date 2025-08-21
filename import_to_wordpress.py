@@ -121,8 +121,12 @@ def fetch_existing_products(
         )
 
     # Construct the correct endpoint URL
+    # Normalize the URL to avoid double-appending endpoints
     if wp_api_url.endswith("/upload"):
         existing_url = wp_api_url.replace("/upload", "/existing-products")
+    elif wp_api_url.endswith("/import-product"):
+        # Replace import-product with existing-products
+        existing_url = wp_api_url.replace("/import-product", "/existing-products")
     else:
         # Ensure we have the full API URL
         existing_url = wp_api_url.rstrip("/") + "/existing-products"
@@ -168,8 +172,12 @@ def import_product_to_wp(
         )
 
     # Construct the correct import-product endpoint URL
+    # Normalize the URL to avoid double-appending endpoints
     if wp_api_url.endswith("/upload"):
         import_url = wp_api_url.replace("/upload", "/import-product")
+    elif wp_api_url.endswith("/import-product"):
+        # URL already has the correct endpoint
+        import_url = wp_api_url
     else:
         # Ensure we have the full API URL
         import_url = wp_api_url.rstrip("/") + "/import-product"
