@@ -496,7 +496,10 @@ jobs:
           echo "Testing API endpoint before import..."
           
           # Test the API endpoint that will be used
-          TEST_URL="$WP_API_URL/existing-products"
+          # Normalize base API URL (strip trailing /import-product or /upload)
+          TEST_API_BASE="${WP_API_URL%/import-product}"
+          TEST_API_BASE="${TEST_API_BASE%/upload}"
+          TEST_URL="$TEST_API_BASE/existing-products"
           echo "Testing URL: $TEST_URL"
           echo "API Key: ${WP_API_KEY:0:10}..."
           
