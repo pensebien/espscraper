@@ -1,558 +1,120 @@
-name: WordPress Import (Product-by-Product)
+name: WordPress Import Workflow
 
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+        - development
       mode:
-        description: 'Import mode (sync or override)'
-        required: false
+        description: 'Import mode'
+        required: true
         default: 'sync'
         type: choice
         options:
-          - sync
-          - override
+        - sync
+        - override
       product_limit:
-        description: 'Maximum number of products to import'
+        description: 'Number of products to import'
         required: false
-        default: '100'
+        default: '50'
         type: string
       use_enhanced_files:
-        description: 'Use enhanced files (with FPD config) instead of regular batch files'
+        description: 'Use enhanced files (recommended)'
         required: false
         default: 'true'
         type: choice
         options:
-          - 'true'
-          - 'false'
-      environment:
-        description: 'Environment for .env file (dev, staging, prod)'
-        required: false
-        default: 'dev'
-        type: choice
-        options:
-          - dev
-          - staging
-          - prod
-
-permissions:
-  contents: read
+        - 'true'
+        - 'false'
 
 jobs:
-  import_to_wordpress:
+  import-products:
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: 📥 Checkout repo
-        uses: actions/checkout@v4
-
-      - name: 🐍 Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-
-      - name: 📥 Handle Git LFS files
-        run: |
-          echo "=== Handling Git LFS files ==="
-          # Install git-lfs if not available
-          if ! command -v git-lfs &> /dev/null; then
-            echo "Installing git-lfs..."
-            curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | sudo bash
-            sudo apt-get install git-lfs
-          fi
-
-          # Initialize git-lfs and pull actual files
-          git lfs install
-          git lfs pull
-
-          echo "=== Checking available files after LFS pull ==="
-          ls -la batch/ 2>/dev/null || echo "No batch directory found"
-          ls -la enhanced/ 2>/dev/null || echo "No enhanced directory found"
-          find . -name "*.jsonl" -type f | head -10 || echo "No JSONL files found"
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: 📦 Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: 📥 Fetch latest files from artifacts branch
-        run: |
-          echo "=== Fetching latest files from artifacts branch ==="
-
-          # Check if artifacts branch exists
-          if git ls-remote --heads origin artifacts | grep -q artifacts; then
-            echo "✅ Artifacts branch exists, fetching latest files..."
-
-            # Fetch the artifacts branch
-            git fetch origin artifacts:artifacts || echo "Could not fetch artifacts branch"
-
-            # Check what we have in the artifacts branch
-            echo "=== Contents of artifacts branch ==="
-            git ls-tree -r artifacts --name-only | grep -E "\.(jsonl|json)$" || echo "No JSON/JSONL files found in artifacts branch"
-
-            # Pull LFS files from artifacts branch specifically
-            echo "=== Pulling LFS files from artifacts branch ==="
-            git lfs pull origin artifacts --include="*.jsonl" || echo "No LFS files to pull from artifacts branch"
-
-            # Copy latest files if they exist (handle Git LFS)
-            if [ -f "artifacts/espscraper/data/api_scraped_links.jsonl" ]; then
-              cp artifacts/espscraper/data/api_scraped_links.jsonl espscraper/data/
-              echo "✅ Updated api_scraped_links.jsonl from artifacts branch"
-            fi
-
-            if [ -f "artifacts/final_product_details.jsonl" ]; then
-              cp artifacts/final_product_details.jsonl espscraper/data/
-              echo "✅ Updated final_product_details.jsonl from artifacts branch"
-            fi
-
-            # Copy batch files with better error handling
-            if [ -d "artifacts/batch" ]; then
-              echo "=== Copying batch files from artifacts/batch/ ==="
-              ls -la artifacts/batch/ || echo "No files in artifacts/batch/"
-
-              # First, ensure we have the actual files (not LFS pointers)
-              echo "=== Checking if batch files are LFS pointers ==="
-              for file in artifacts/batch/*.jsonl; do
-                if [ -f "$file" ]; then
-                  echo "File: $file"
-                  file -b "$file" || echo "Could not determine file type"
-                  head -c 100 "$file" || echo "Could not read file"
-                fi
-              done
-
-              # Try to pull LFS files specifically for batch directory
-              echo "=== Pulling LFS files for batch directory ==="
-              git lfs pull --include="batch/*.jsonl" || echo "No LFS files to pull for batch"
-
-              # Copy all JSONL files from artifacts/batch to local batch/
-              echo "=== Copying batch files ==="
-              cp artifacts/batch/*.jsonl batch/ 2>/dev/null || echo "No batch files to copy"
-
-              echo "=== Batch files after copy ==="
-              ls -la batch/ || echo "No batch files found after copy"
-
-              # Verify the copied files are actual files, not pointers
-              echo "=== Verifying copied batch files ==="
-              for file in batch/*.jsonl; do
-                if [ -f "$file" ]; then
-                  echo "Copied file: $file"
-                  file -b "$file" || echo "Could not determine file type"
-                  wc -l "$file" || echo "Could not count lines"
-                fi
-              done
-            else
-              echo "⚠️ No artifacts/batch directory found"
-            fi
-
-            # Copy enhanced files if they exist
-            if [ -d "artifacts/enhanced" ]; then
-              echo "=== Copying enhanced files from artifacts/enhanced/ ==="
-              ls -la artifacts/enhanced/ || echo "No files in artifacts/enhanced/"
-
-              # Try to pull LFS files specifically for enhanced directory
-              echo "=== Pulling LFS files for enhanced directory ==="
-              git lfs pull --include="enhanced/*.jsonl" || echo "No LFS files to pull for enhanced"
-
-              # Copy all JSONL files from artifacts/enhanced to local enhanced/
-              echo "=== Copying enhanced files ==="
-              cp artifacts/enhanced/*.jsonl enhanced/ 2>/dev/null || echo "No enhanced files to copy"
-
-              echo "=== Enhanced files after copy ==="
-              ls -la enhanced/ || echo "No enhanced files found after copy"
-
-              # Verify the copied files are actual files, not pointers
-              echo "=== Verifying copied enhanced files ==="
-              for file in enhanced/*.jsonl; do
-                if [ -f "$file" ]; then
-                  echo "Copied file: $file"
-                  file -b "$file" || echo "Could not determine file type"
-                  wc -l "$file" || echo "Could not count lines"
-                fi
-              done
-            else
-              echo "⚠️ No artifacts/enhanced directory found"
-            fi
-
-            # Show file sizes after update
-            echo "=== File sizes after update ==="
-            ls -la espscraper/data/*.jsonl 2>/dev/null || echo "No JSONL files found in espscraper/data"
-            ls -la batch/*.jsonl 2>/dev/null || echo "No batch files found in batch/"
-            ls -la enhanced/*.jsonl 2>/dev/null || echo "No enhanced files found in enhanced/"
-
-          else
-            echo "⚠️ Artifacts branch does not exist yet, starting fresh"
-          fi
-
-      - name: Load Environment Variables
-        run: |
-          echo "Loading environment variables..."
-          echo "Current directory: $(pwd)"
-          echo "Environment input: ${{ github.event.inputs.environment || 'dev' }}"
-          echo "Looking for .env file: .env.${{ github.event.inputs.environment || 'dev' }}"
-          
-          # List all files in current directory
-          echo "=== Files in current directory ==="
-          ls -la | head -20
-          echo "=== .env files ==="
-          ls -la .env* 2>/dev/null || echo "No .env files found"
-          
-          # Check for environment-specific .env file first
-          if [ -f ".env.${{ github.event.inputs.environment || 'dev' }}" ]; then
-            echo "✅ Loading from .env.${{ github.event.inputs.environment || 'dev' }}"
-            echo "File content:"
-            cat ".env.${{ github.event.inputs.environment || 'dev' }}"
-            echo "=== End file content ==="
-            
-            # Read the file and set variables in GITHUB_ENV
-            while IFS= read -r line; do
-              # Skip comments and empty lines
-              if [[ ! "$line" =~ ^[[:space:]]*# ]] && [[ -n "$line" ]]; then
-                # Extract variable name and value
-                var_name=$(echo "$line" | cut -d'=' -f1)
-                var_value=$(echo "$line" | cut -d'=' -f2-)
-                # Set in GITHUB_ENV
-                echo "$var_name=$var_value" >> $GITHUB_ENV
-                echo "Set $var_name"
-              fi
-            done < ".env.${{ github.event.inputs.environment || 'dev' }}"
-          elif [ -f .env ]; then
-            echo "✅ Loading from .env"
-            while IFS= read -r line; do
-              if [[ ! "$line" =~ ^[[:space:]]*# ]] && [[ -n "$line" ]]; then
-                var_name=$(echo "$line" | cut -d'=' -f1)
-                var_value=$(echo "$line" | cut -d'=' -f2-)
-                echo "$var_name=$var_value" >> $GITHUB_ENV
-                echo "Set $var_name"
-              fi
-            done < .env
-          else
-            echo "⚠️  No .env file found, using GitHub secrets"
-          fi
-
-          # Set WP_BASE_URL from GitHub secret if not set from .env
-          if [ -z "$WP_BASE_URL" ]; then
-            echo "Using WP_BASE_URL from GitHub secret"
-            echo "WP_BASE_URL=${{ secrets.WP_BASE_URL }}" >> $GITHUB_ENV
-          else
-            echo "Using WP_BASE_URL from .env: $WP_BASE_URL"
-          fi
-          
-          # Fallback: Set environment-specific URLs if .env loading failed
-          if [ -z "$WP_BASE_URL" ]; then
-            echo "⚠️ WP_BASE_URL still empty, setting fallback values based on environment"
-            if [ "${{ github.event.inputs.environment || 'dev' }}" = "staging" ]; then
-              echo "WP_BASE_URL=https://tmgdev.dedicatedmkt.com" >> $GITHUB_ENV
-              echo "WP_API_URL=https://tmgdev.dedicatedmkt.com/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
-              echo "WP_API_KEY=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" >> $GITHUB_ENV
-              echo "✅ Set staging URLs and API key as fallback"
-            elif [ "${{ github.event.inputs.environment || 'dev' }}" = "prod" ]; then
-              echo "WP_BASE_URL=https://tmg.dedicatedmkt.com" >> $GITHUB_ENV
-              echo "WP_API_URL=https://tmg.dedicatedmkt.com/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
-              echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
-              echo "✅ Set production URLs and API key as fallback"
-            else
-              echo "WP_BASE_URL=https://unwritten-bottle.localsite.io" >> $GITHUB_ENV
-              echo "WP_API_URL=https://unwritten-bottle.localsite.io/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
-              echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
-              echo "✅ Set development URLs and API key as fallback"
-            fi
-          fi
-
-          # Debug: Show what we loaded
-          echo "=== Debug: Environment Variables Loaded ==="
-          echo "WP_BASE_URL: '$WP_BASE_URL'"
-          echo "WP_BASIC_AUTH_USER: '$WP_BASIC_AUTH_USER'"
-          echo "WP_BASIC_AUTH_PASS: '${WP_BASIC_AUTH_PASS:+***}' (masked)"
-          echo "=== End Debug ==="
-
-      - name: Fetch API URL and Key from WordPress (Optional)
-        id: get_params
-        run: |
-          echo "=== Fetching API parameters from WordPress ==="
-          echo "WP_BASE_URL: $WP_BASE_URL"
-          echo "WP_BASIC_AUTH_USER: $WP_BASIC_AUTH_USER"
-
-                        # Build curl command conditionally based on environment
-              CURL_CMD="curl -s -w \"\\n%{http_code}\""
-              
-              # Add Cloudflare bypass headers for staging/production
-              if [ "${{ github.event.inputs.environment || 'dev' }}" != "dev" ]; then
-                CURL_CMD="$CURL_CMD -H \"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36\""
-                CURL_CMD="$CURL_CMD -H \"Accept: application/json, text/plain, */*\""
-                CURL_CMD="$CURL_CMD -H \"Accept-Language: en-US,en;q=0.9\""
-                CURL_CMD="$CURL_CMD -H \"Accept-Encoding: gzip, deflate, br\""
-                CURL_CMD="$CURL_CMD -H \"Connection: keep-alive\""
-                CURL_CMD="$CURL_CMD -H \"Upgrade-Insecure-Requests: 1\""
-                echo "🛡️ Added Cloudflare bypass headers for staging/production"
-              fi
-              
-              # Only add Basic Auth if we're in development environment and credentials are available
-              if [ "${{ github.event.inputs.environment || 'dev' }}" = "dev" ] && [ -n "${{ secrets.WP_BASIC_AUTH_USER }}" ] && [ -n "${{ secrets.WP_BASIC_AUTH_PASS }}" ]; then
-                CURL_CMD="$CURL_CMD -u \"${{ secrets.WP_BASIC_AUTH_USER }}:${{ secrets.WP_BASIC_AUTH_PASS }}\""
-                echo "🔐 Using Basic Auth for development environment"
-              else
-                echo "🌐 No Basic Auth needed for this environment"
-              fi
-
-          # Execute the curl command with verbose output
-          echo "🔍 Executing curl command..."
-          
-          # Use different secret for staging environment
-          if [ "${{ github.event.inputs.environment || 'dev' }}" = "staging" ]; then
-            SECRET_TO_USE="default_github_secret_for_staging"
-            echo "🔑 Using staging secret: $SECRET_TO_USE"
-          else
-            SECRET_TO_USE="${{ secrets.WP_API_SECRET }}"
-            echo "🔑 Using production secret"
-          fi
-          
-          echo "Command: $CURL_CMD \"$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=$SECRET_TO_USE\""
-          
-          response=$($CURL_CMD "$WP_BASE_URL/wp-json/promostandards-importer/v1/github-params?secret=$SECRET_TO_USE")
-
-          # Extract HTTP status code and response body
-          http_code=$(echo "$response" | tail -n1 | tr -d '\n\r"')
-          body=$(echo "$response" | sed '$d')
-
-          echo "HTTP Status: $http_code"
-          echo "Response length: ${#body} characters"
-          echo "Response preview (first 500 chars):"
-          echo "$body" | head -c 500
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        pip install requests
+        
+    - name: Run WordPress Import Script
+      id: import-process
+      env:
+        IMPORT_MODE: ${{ github.event.inputs.mode }}
+        PRODUCT_LIMIT: ${{ github.event.inputs.product_limit }}
+        USE_ENHANCED_FILES: ${{ github.event.inputs.use_enhanced_files }}
+        WP_API_URL: ${{ secrets.WP_API_URL }}
+        WP_API_KEY: ${{ secrets.WP_API_KEY }}
+        WP_BASIC_AUTH_USER: ${{ secrets.WP_BASIC_AUTH_USER }}
+        WP_BASIC_AUTH_PASS: ${{ secrets.WP_BASIC_AUTH_PASS }}
+      run: |
+        echo "🚀 Starting WordPress Import"
+        echo "Environment: ${{ github.event.inputs.environment }}"
+        echo "Mode: ${{ github.event.inputs.mode }}"
+        echo "Product Limit: ${{ github.event.inputs.product_limit }}"
+        echo "Use Enhanced Files: ${{ github.event.inputs.use_enhanced_files }}"
+        echo ""
+        
+        # Run the import script with proper authentication
+        python import_to_wordpress.py \
+          --wp-api-url "$WP_API_URL" \
+          --wp-api-key "$WP_API_KEY" \
+          --mode "$IMPORT_MODE" \
+          --product-limit "$PRODUCT_LIMIT" \
+          $([ "$USE_ENHANCED_FILES" = "true" ] && echo "--use-enhanced-files") \
+          $([ -n "$WP_BASIC_AUTH_USER" ] && echo "--wp-basic-auth-user" "$WP_BASIC_AUTH_USER") \
+          $([ -n "$WP_BASIC_AUTH_PASS" ] && echo "--wp-basic-auth-pass" "$WP_BASIC_AUTH_PASS")
+        
+    - name: Upload import results
+      uses: actions/upload-artifact@v4
+      with:
+        name: import-results-${{ github.event.inputs.environment }}
+        path: |
+          import_summary.json
+          import_errors.json
+          import_progress.json
+          import_heartbeat.json
+        retention-days: 30
+        
+    - name: Display results
+      run: |
+        echo "🎉 Import completed!"
+        echo "Environment: ${{ github.event.inputs.environment }}"
+        echo "Mode: ${{ github.event.inputs.mode }}"
+        echo "Use Enhanced Files: ${{ github.event.inputs.use_enhanced_files }}"
+        echo "Product Limit: ${{ github.event.inputs.product_limit }}"
+        echo ""
+        
+        # Display summary if available
+        if [ -f "import_summary.json" ]; then
+          echo "📊 Import Summary:"
+          cat import_summary.json | python -m json.tool
+        fi
+        
+        # Display heartbeat if available
+        if [ -f "import_heartbeat.json" ]; then
           echo ""
-          echo "Response preview (last 500 chars):"
-          echo "$body" | tail -c 500
+          echo "💓 Import Heartbeat:"
+          cat import_heartbeat.json | python -m json.tool
+        fi
+        
+        # Display errors if any
+        if [ -f "import_errors.json" ]; then
           echo ""
-          
-          # Save full response for debugging
-          echo "$body" > full_response.txt
-          echo "Full response saved to full_response.txt"
-
-          # Check if we got a successful response (200-299)
-          if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
-            echo "$body" > params.json
-            echo "✅ Successfully fetched parameters from WordPress"
-          else
-            # For staging environment, use hardcoded values since the plugin doesn't have fallback logic
-            if [ "${{ github.event.inputs.environment || 'dev' }}" = "staging" ]; then
-              echo '{"api_url": "https://tmgdev.dedicatedmkt.com/wp-json/promostandards-importer/v1/import-product", "api_key": "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"}' > params.json
-              echo "✅ Using hardcoded staging configuration (plugin doesn't have fallback logic)"
-            else
-              echo '{"api_url": "", "api_key": ""}' > params.json
-              echo "⚠️ Failed to fetch from WordPress (HTTP $http_code), using fallback configuration"
-              echo "This is expected for staging/production sites with Cloudflare protection"
-            fi
-          fi
-
-          # Debug: Show what we're trying to parse
-          echo "🔍 Debug: JSON parsing attempt"
-          echo "params.json content:"
-          cat params.json
-          echo ""
-          
-          # Test JSON validity
-          echo "🔍 Testing JSON validity with jq..."
-          if jq empty params.json 2>/dev/null; then
-            echo "✅ JSON is valid"
-          else
-            echo "❌ JSON is invalid"
-            echo "jq error output:"
-            jq empty params.json 2>&1 || true
-          fi
-
-                      # Validate JSON and extract values
-            if jq empty params.json 2>/dev/null; then
-              echo "🔍 Extracting values from JSON..."
-              WP_API_URL_FROM_WP=$(jq -r .api_url params.json)
-              WP_API_KEY_FROM_WP=$(jq -r .api_key params.json)
-
-              echo "Extracted API URL: '$WP_API_URL_FROM_WP'"
-              echo "Extracted API Key: '${WP_API_KEY_FROM_WP:0:10}...'"
-              
-              # Debug: Show the exact jq commands and their output
-              echo "🔍 Debug: jq extraction details"
-              echo "jq -r .api_url params.json output: '$(jq -r .api_url params.json)'"
-              echo "jq -r .api_key params.json output: '$(jq -r .api_key params.json)'"
-
-            # Debug: Show decision logic
-            echo "🔍 Debug: Configuration decision logic"
-            echo "WP_API_URL_FROM_WP: '$WP_API_URL_FROM_WP'"
-            echo "WP_API_KEY_FROM_WP: '${WP_API_KEY_FROM_WP:0:10}...'"
-            echo "WP_API_URL_FROM_WP != \"\": $([ "$WP_API_URL_FROM_WP" != "" ] && echo "true" || echo "false")"
-            echo "WP_API_URL_FROM_WP != \"null\": $([ "$WP_API_URL_FROM_WP" != "null" ] && echo "true" || echo "false")"
-            echo "WP_API_URL_FROM_WP != *\"/upload\": $([[ "$WP_API_URL_FROM_WP" != *"/upload" ]] && echo "true" || echo "false")"
-            
-            # Use WordPress values if not empty and correct, otherwise use fallback
-            if [ "$WP_API_URL_FROM_WP" != "" ] && [ "$WP_API_URL_FROM_WP" != "null" ] && [[ "$WP_API_URL_FROM_WP" != *"/upload" ]]; then
-              echo "WP_API_URL=$WP_API_URL_FROM_WP" >> $GITHUB_ENV
-              echo "WP_API_KEY=$WP_API_KEY_FROM_WP" >> $GITHUB_ENV
-              echo "✅ Using WordPress configuration"
-            else
-              echo "WP_API_URL=$WP_BASE_URL/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
-              echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
-              if [[ "$WP_API_URL_FROM_WP" == *"/upload" ]]; then
-                echo "⚠️ Using fallback configuration (WordPress returned /upload URL)"
-              else
-                echo "⚠️ Using fallback configuration (WordPress returned empty values)"
-              fi
-              echo "Fallback API URL: $WP_BASE_URL/wp-json/promostandards-importer/v1"
-              echo "Fallback API Key: ${{ secrets.WP_API_KEY }}"
-            fi
-          else
-            echo "❌ Invalid JSON response, using fallback configuration"
-            echo "WP_API_URL=$WP_BASE_URL/wp-json/promostandards-importer/v1" >> $GITHUB_ENV
-            echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
-          fi
-
-          # Check WordPress integration status
-          echo "🔍 Debug: Final WordPress integration check"
-          echo "WP_API_URL_FROM_WP: '$WP_API_URL_FROM_WP'"
-          echo "WP_API_URL_FROM_WP != \"\": $([ "$WP_API_URL_FROM_WP" != "" ] && echo "true" || echo "false")"
-          echo "WP_API_URL_FROM_WP != \"null\": $([ "$WP_API_URL_FROM_WP" != "null" ] && echo "true" || echo "false")"
-          
-          if [ "$WP_API_URL_FROM_WP" != "" ] && [ "$WP_API_URL_FROM_WP" != "null" ]; then
-            echo "✅ WordPress integration: Configured"
-          else
-            echo "⚠️ WordPress integration: Not configured"
-          fi
-        env:
-          WP_BASE_URL: ${{ env.WP_BASE_URL }}
-
-      - name: Set Environment Variables
-        run: |
-          echo "WP_BASE_URL=${{ env.WP_BASE_URL }}" >> $GITHUB_ENV
-          echo "IMPORT_MODE=${{ github.event.inputs.mode }}" >> $GITHUB_ENV
-          echo "PRODUCT_LIMIT=${{ github.event.inputs.product_limit }}" >> $GITHUB_ENV
-          echo "USE_ENHANCED_FILES=${{ github.event.inputs.use_enhanced_files }}" >> $GITHUB_ENV
-
-          # Set basic auth variables only if they exist (optional)
-          if [ -n "${{ secrets.WP_BASIC_AUTH_USER }}" ]; then
-            echo "WP_BASIC_AUTH_USER=${{ secrets.WP_BASIC_AUTH_USER }}" >> $GITHUB_ENV
-          fi
-          if [ -n "${{ secrets.WP_BASIC_AUTH_PASS }}" ]; then
-            echo "WP_BASIC_AUTH_PASS=${{ secrets.WP_BASIC_AUTH_PASS }}" >> $GITHUB_ENV
-          fi
-
-      - name: Debug API URL and Key
-        run: |
-          echo "=== Debug: API URL and Key ==="
-          echo "WP_API_URL: '$WP_API_URL'"
-          echo "WP_API_KEY: '$WP_API_KEY'"
-          echo "WP_BASE_URL: '$WP_BASE_URL'"
-          echo "WP_BASIC_AUTH_USER: '$WP_BASIC_AUTH_USER'"
-          echo "Params file content:"
-          cat params.json || echo "No params.json file found"
-          echo "=== End Debug ==="
-        env:
-          WP_API_URL: ${{ env.WP_API_URL }}
-          WP_API_KEY: ${{ env.WP_API_KEY }}
-          WP_BASE_URL: ${{ env.WP_BASE_URL }}
-          WP_BASIC_AUTH_USER: ${{ env.WP_BASIC_AUTH_USER }}
-
-      - name: 🚀 Run WordPress Import
-        run: |
-          echo "=== Starting WordPress Import ==="
-          echo "Mode: ${{ github.event.inputs.mode || 'sync' }}"
-          echo "Product Limit: ${{ github.event.inputs.product_limit || '100' }}"
-          echo "Use Enhanced Files: ${{ github.event.inputs.use_enhanced_files || 'true' }}"
-          echo "API URL: $WP_API_URL"
-          echo "API Key: ${WP_API_KEY:0:10}..." # Show first 10 chars of API key
-          echo "Basic Auth User: $WP_BASIC_AUTH_USER"
-
-          # Show available files
-          echo "=== Available Files ==="
-          echo "Enhanced files:"
-          ls -la enhanced/*.jsonl 2>/dev/null || echo "No enhanced files found"
-          echo "Batch files:"
-          ls -la batch/*.jsonl 2>/dev/null || echo "No batch files found"
-          echo "=== Running Import Script ==="
-
-          # Build command with conditional Basic Auth
-          CMD="python3 import_to_wordpress.py \
-            --mode ${{ github.event.inputs.mode || 'sync' }} \
-            --product-limit ${{ github.event.inputs.product_limit || '100' }} \
-            ${{ github.event.inputs.use_enhanced_files == 'true' && '--use-enhanced-files' || '' }} \
-            --wp-api-url \"$WP_API_URL\" \
-            --wp-api-key \"$WP_API_KEY\""
-          
-          # Only add Basic Auth if we're in development environment and credentials are available
-          if [ "${{ github.event.inputs.environment || 'dev' }}" = "dev" ] && [ -n "$WP_BASIC_AUTH_USER" ] && [ -n "$WP_BASIC_AUTH_PASS" ]; then
-            CMD="$CMD --wp-basic-auth-user \"$WP_BASIC_AUTH_USER\" --wp-basic-auth-pass \"$WP_BASIC_AUTH_PASS\""
-            echo "🔐 Adding Basic Auth for development environment"
-          else
-            echo "🌐 No Basic Auth needed for this environment"
-          fi
-          
-          echo "Running command: $CMD"
-          
-          # Add debugging before running the import
-          echo "🔍 Debug: Pre-import API test"
-          echo "Testing API endpoint before import..."
-          
-          # Test the API endpoint that will be used
-          # Normalize base API URL (strip trailing /import-product or /upload)
-          TEST_API_BASE="${WP_API_URL%/import-product}"
-          TEST_API_BASE="${TEST_API_BASE%/upload}"
-          TEST_URL="$TEST_API_BASE/existing-products"
-          echo "Testing URL: $TEST_URL"
-          echo "API Key: ${WP_API_KEY:0:10}..."
-          
-          # Test with curl to see what happens (with Cloudflare bypass headers)
-          CURL_TEST_CMD="curl -s -w \"\\n%{http_code}\" -H \"X-API-Key: $WP_API_KEY\" -H \"User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\" -H \"Accept: application/json, text/plain, */*\" -H \"Accept-Language: en-US,en;q=0.9\" -H \"Accept-Encoding: gzip, deflate, br\" -H \"Connection: keep-alive\" -H \"Upgrade-Insecure-Requests: 1\" -H \"Sec-Fetch-Dest: empty\" -H \"Sec-Fetch-Mode: cors\" -H \"Sec-Fetch-Site: same-origin\" -H \"Cache-Control: no-cache\" -H \"Pragma: no-cache\" \"$TEST_URL\""
-          echo "Test command: $CURL_TEST_CMD"
-          
-          test_response=$(eval $CURL_TEST_CMD)
-          test_http_code=$(echo "$test_response" | tail -n1 | tr -d '\n\r"')
-          test_body=$(echo "$test_response" | sed '$d')
-          
-          echo "Test HTTP Status: $test_http_code"
-          echo "Test Response preview:"
-          echo "$test_body" | head -c 500
-          echo ""
-          
-          # If we get a 403 with "Just a moment...", wait and retry
-          if [ "$test_http_code" = "403" ] && echo "$test_body" | grep -q "Just a moment"; then
-            echo "🛡️ Cloudflare protection detected, waiting 10 seconds and retrying..."
-            sleep 10
-            
-            # Retry with the same command
-            test_response=$(eval $CURL_TEST_CMD)
-            test_http_code=$(echo "$test_response" | tail -n1 | tr -d '\n\r"')
-            test_body=$(echo "$test_response" | sed '$d')
-            
-            echo "Retry HTTP Status: $test_http_code"
-            echo "Retry Response preview:"
-            echo "$test_body" | head -c 500
-            echo ""
-          fi
-          
-          # Now run the actual import
-          echo "🔍 Running actual import..."
-          
-          # If the pre-import test failed with Cloudflare, warn the user
-          if [ "$test_http_code" != "200" ]; then
-            echo "⚠️ Warning: Pre-import test failed (HTTP $test_http_code)"
-            echo "🛡️ This might be due to Cloudflare protection on the staging environment"
-            echo "💡 The import script has built-in Cloudflare bypass, so it might still work"
-            echo "📝 If this continues to fail, consider:"
-            echo "   1. Running the import locally instead of via GitHub Actions"
-            echo "   2. Temporarily disabling Cloudflare protection on staging"
-            echo "   3. Using a different approach for staging imports"
-          fi
-          
-          eval $CMD
-        env:
-          WP_API_URL: ${{ env.WP_API_URL }}
-          WP_API_KEY: ${{ env.WP_API_KEY }}
-          WP_BASE_URL: ${{ env.WP_BASE_URL }}
-          WP_BASIC_AUTH_USER: ${{ env.WP_BASIC_AUTH_USER }}
-          WP_BASIC_AUTH_PASS: ${{ env.WP_BASIC_AUTH_PASS }}
-
-      - name: ✅ Notify completion
-        run: echo "WordPress import complete."
+          echo "❌ Import Errors:"
+          cat import_errors.json | python -m json.tool
+        fi
