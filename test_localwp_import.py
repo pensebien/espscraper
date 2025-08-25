@@ -27,12 +27,26 @@ def test_localwp_import():
     print(f"\n🔍 Test 1: Get GitHub params")
     try:
         params_url = f"{wp_api_url}/github-params"
-        response = requests.get(params_url, timeout=30)
+        print(f"Requesting: {params_url}")
+        
+        response = requests.get(
+            params_url, 
+            timeout=30,
+            headers={
+                'User-Agent': 'GitHub-Actions-Test/1.0',
+                'Accept': 'application/json'
+            }
+        )
+        
+        print(f"Response Status: {response.status_code}")
+        print(f"Response Headers: {dict(response.headers)}")
+        
         if response.status_code == 200:
             data = response.json()
             print(f"✅ Successfully got GitHub params: {data}")
         else:
             print(f"❌ Failed to get GitHub params: {response.status_code}")
+            print(f"Response Text: {response.text}")
             return
     except Exception as e:
         print(f"❌ Failed to get GitHub params: {e}")
