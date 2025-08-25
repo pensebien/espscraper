@@ -1,0 +1,57 @@
+name: LocalWP Import Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of test to run'
+        required: true
+        default: 'localwp'
+        type: choice
+        options:
+        - localwp
+        - staging
+        - production
+      product_count:
+        description: 'Number of test products to import'
+        required: false
+        default: '5'
+        type: string
+
+jobs:
+  test-localwp-import:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        pip install requests
+        
+    - name: Run LocalWP Import Test
+      env:
+        LOCALWP_PASSWORD: ${{ secrets.LOCALWP_PASSWORD }}
+      run: |
+        python test_localwp_import.py
+        
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      with:
+        name: localwp-test-results
+        path: |
+          test_results.json
+        retention-days: 7
+        
+    - name: Display test summary
+      run: |
+        echo "🧪 LocalWP Import Test Completed"
+        echo "Test Type: ${{ github.event.inputs.test_type }}"
+        echo "Product Count: ${{ github.event.inputs.product_count }}"
+        echo "Check the artifacts for detailed results"
