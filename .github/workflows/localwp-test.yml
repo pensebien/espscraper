@@ -1,4 +1,4 @@
-name: LocalWP Import Test
+name: Staging Import Test (No Auth)
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ on:
         type: string
 
 jobs:
-  test-localwp-import:
+  test-staging-import:
     runs-on: ubuntu-latest
     
     steps:
@@ -35,9 +35,7 @@ jobs:
       run: |
         pip install requests
         
-    - name: Run LocalWP Import Test
-      env:
-        LOCALWP_PASSWORD: ${{ secrets.LOCALWP_PASSWORD }}
+    - name: Run Staging Import Test (No Auth)
       run: |
         python test_localwp_import.py
         
@@ -51,7 +49,7 @@ jobs:
         
     - name: Display test summary
       run: |
-        echo "🧪 LocalWP Import Test Completed"
+        echo "🧪 Staging Import Test Completed (No Auth)"
         echo "Test Type: ${{ github.event.inputs.test_type }}"
         echo "Product Count: ${{ github.event.inputs.product_count }}"
         echo "Check the artifacts for detailed results"
