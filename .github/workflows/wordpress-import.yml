@@ -65,45 +65,30 @@ jobs:
         
         echo "✅ Environment secrets set for: $ENVIRONMENT"
         
-    - name: Copy artifacts from environment branch
+    - name: Copy artifacts from artifacts branch
       id: copy-artifacts
       run: |
-        ENVIRONMENT="${{ github.event.inputs.environment }}"
-        echo "📁 Copying artifacts from $ENVIRONMENT branch..."
-        
-        # Determine artifacts branch based on environment
-        if [ "$ENVIRONMENT" = "staging" ]; then
-          ARTIFACTS_BRANCH="artifacts-staging"
-        elif [ "$ENVIRONMENT" = "production" ]; then
-          ARTIFACTS_BRANCH="artifacts-production"
-        elif [ "$ENVIRONMENT" = "development" ]; then
-          ARTIFACTS_BRANCH="artifacts-development"
-        else
-          echo "❌ Unknown environment: $ENVIRONMENT"
-          exit 1
-        fi
-        
-        echo "📁 Fetching artifacts from branch: $ARTIFACTS_BRANCH"
+        echo "📁 Copying artifacts from artifacts branch..."
         
         # Fetch the artifacts branch
-        git fetch origin $ARTIFACTS_BRANCH:$ARTIFACTS_BRANCH
+        git fetch origin artifacts:artifacts
         
         # Copy enhanced files from artifacts branch
-        if git show $ARTIFACTS_BRANCH:enhanced/ > /dev/null 2>&1; then
-          echo "📁 Copying enhanced files from $ARTIFACTS_BRANCH..."
-          git checkout $ARTIFACTS_BRANCH -- enhanced/
+        if git show artifacts:enhanced/ > /dev/null 2>&1; then
+          echo "📁 Copying enhanced files from artifacts branch..."
+          git checkout artifacts -- enhanced/
           ls -la enhanced/
         else
-          echo "⚠️ No enhanced directory found in $ARTIFACTS_BRANCH"
+          echo "⚠️ No enhanced directory found in artifacts branch"
         fi
         
         # Copy batch files from artifacts branch
-        if git show $ARTIFACTS_BRANCH:batch/ > /dev/null 2>&1; then
-          echo "📁 Copying batch files from $ARTIFACTS_BRANCH..."
-          git checkout $ARTIFACTS_BRANCH -- batch/
+        if git show artifacts:batch/ > /dev/null 2>&1; then
+          echo "📁 Copying batch files from artifacts branch..."
+          git checkout artifacts -- batch/
           ls -la batch/
         else
-          echo "⚠️ No batch directory found in $ARTIFACTS_BRANCH"
+          echo "⚠️ No batch directory found in artifacts branch"
         fi
         
         echo "✅ Artifacts copied successfully"
