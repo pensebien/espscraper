@@ -51,22 +51,33 @@ jobs:
       run: |
         pip install requests
         
+    - name: Set environment-specific secrets
+      id: set-secrets
+      run: |
+        ENVIRONMENT="${{ github.event.inputs.environment }}"
+        echo "Setting secrets for environment: $ENVIRONMENT"
+        
+        # Use single set of secrets for all environments (simplified for testing)
+        echo "WP_API_URL=${{ secrets.WP_API_URL }}" >> $GITHUB_ENV
+        echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
+        echo "WP_BASIC_AUTH_USER=${{ secrets.WP_BASIC_AUTH_USER }}" >> $GITHUB_ENV
+        echo "WP_BASIC_AUTH_PASS=${{ secrets.WP_BASIC_AUTH_PASS }}" >> $GITHUB_ENV
+        
+        echo "✅ Environment secrets set for: $ENVIRONMENT"
+        
     - name: Run WordPress Import Script
       id: import-process
       env:
         IMPORT_MODE: ${{ github.event.inputs.mode }}
         PRODUCT_LIMIT: ${{ github.event.inputs.product_limit }}
         USE_ENHANCED_FILES: ${{ github.event.inputs.use_enhanced_files }}
-        WP_API_URL: ${{ secrets.WP_API_URL }}
-        WP_API_KEY: ${{ secrets.WP_API_KEY }}
-        WP_BASIC_AUTH_USER: ${{ secrets.WP_BASIC_AUTH_USER }}
-        WP_BASIC_AUTH_PASS: ${{ secrets.WP_BASIC_AUTH_PASS }}
       run: |
         echo "🚀 Starting WordPress Import"
         echo "Environment: ${{ github.event.inputs.environment }}"
         echo "Mode: ${{ github.event.inputs.mode }}"
         echo "Product Limit: ${{ github.event.inputs.product_limit }}"
         echo "Use Enhanced Files: ${{ github.event.inputs.use_enhanced_files }}"
+        echo "API URL: $WP_API_URL"
         echo ""
         
         # Run the import script with proper authentication
