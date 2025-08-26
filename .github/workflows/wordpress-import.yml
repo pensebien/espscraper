@@ -57,31 +57,58 @@ jobs:
         ENVIRONMENT="${{ github.event.inputs.environment }}"
         echo "Setting secrets for environment: $ENVIRONMENT"
         
-        # For testing - use hardcoded values if secrets are not set
-        if [ -n "${{ secrets.WP_API_URL }}" ]; then
-          echo "WP_API_URL=${{ secrets.WP_API_URL }}" >> $GITHUB_ENV
-        else
-          echo "WP_API_URL=https://unwritten-bottle.localsite.io/wp-json/promostandards-importer/v1/upload" >> $GITHUB_ENV
-        fi
-        
-        if [ -n "${{ secrets.WP_API_KEY }}" ]; then
-          echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
-        else
-          echo "WP_API_KEY=test-api-key" >> $GITHUB_ENV
-        fi
-        
-        if [ -n "${{ secrets.WP_BASIC_AUTH_USER }}" ]; then
-          echo "WP_BASIC_AUTH_USER=${{ secrets.WP_BASIC_AUTH_USER }}" >> $GITHUB_ENV
-        fi
-        
-        if [ -n "${{ secrets.WP_BASIC_AUTH_PASS }}" ]; then
-          echo "WP_BASIC_AUTH_PASS=${{ secrets.WP_BASIC_AUTH_PASS }}" >> $GITHUB_ENV
-        fi
+        # Set WordPress API credentials
+        echo "WP_API_URL=${{ secrets.WP_API_URL }}" >> $GITHUB_ENV
+        echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
+        echo "WP_BASIC_AUTH_USER=${{ secrets.WP_BASIC_AUTH_USER }}" >> $GITHUB_ENV
+        echo "WP_BASIC_AUTH_PASS=${{ secrets.WP_BASIC_AUTH_PASS }}" >> $GITHUB_ENV
         
         echo "✅ Environment secrets set for: $ENVIRONMENT"
-        echo "API URL: $WP_API_URL"
         
-    - name: Run WordPress Import Script
+    - name: Copy artifacts from environment branch
+      id: copy-artifacts
+      run: |
+        ENVIRONMENT="${{ github.event.inputs.environment }}"
+        echo "📁 Copying artifacts from $ENVIRONMENT branch..."
+        
+        # Determine artifacts branch based on environment
+        if [ "$ENVIRONMENT" = "staging" ]; then
+          ARTIFACTS_BRANCH="artifacts-staging"
+        elif [ "$ENVIRONMENT" = "production" ]; then
+          ARTIFACTS_BRANCH="artifacts-production"
+        elif [ "$ENVIRONMENT" = "development" ]; then
+          ARTIFACTS_BRANCH="artifacts-development"
+        else
+          echo "❌ Unknown environment: $ENVIRONMENT"
+          exit 1
+        fi
+        
+        echo "📁 Fetching artifacts from branch: $ARTIFACTS_BRANCH"
+        
+        # Fetch the artifacts branch
+        git fetch origin $ARTIFACTS_BRANCH:$ARTIFACTS_BRANCH
+        
+        # Copy enhanced files from artifacts branch
+        if git show $ARTIFACTS_BRANCH:enhanced/ > /dev/null 2>&1; then
+          echo "📁 Copying enhanced files from $ARTIFACTS_BRANCH..."
+          git checkout $ARTIFACTS_BRANCH -- enhanced/
+          ls -la enhanced/
+        else
+          echo "⚠️ No enhanced directory found in $ARTIFACTS_BRANCH"
+        fi
+        
+        # Copy batch files from artifacts branch
+        if git show $ARTIFACTS_BRANCH:batch/ > /dev/null 2>&1; then
+          echo "📁 Copying batch files from $ARTIFACTS_BRANCH..."
+          git checkout $ARTIFACTS_BRANCH -- batch/
+          ls -la batch/
+        else
+          echo "⚠️ No batch directory found in $ARTIFACTS_BRANCH"
+        fi
+        
+        echo "✅ Artifacts copied successfully"
+        
+    - name: Process and import products
       id: import-process
       env:
         IMPORT_MODE: ${{ github.event.inputs.mode }}
@@ -93,44 +120,22 @@ jobs:
         echo "Mode: ${{ github.event.inputs.mode }}"
         echo "Product Limit: ${{ github.event.inputs.product_limit }}"
         echo "Use Enhanced Files: ${{ github.event.inputs.use_enhanced_files }}"
-        echo "API URL: $WP_API_URL"
         echo ""
         
-        # Check if directories exist
-        echo "📁 Checking directories..."
+        # Check available files
+        echo "📁 Available files:"
         ls -la
         if [ -d "enhanced" ]; then
-          echo "📁 Enhanced directory exists:"
+          echo "📁 Enhanced files:"
           ls -la enhanced/
-        else
-          echo "📁 Enhanced directory does not exist"
         fi
-        
         if [ -d "batch" ]; then
-          echo "📁 Batch directory exists:"
+          echo "📁 Batch files:"
           ls -la batch/
-        else
-          echo "📁 Batch directory does not exist"
         fi
-        
         echo ""
         
-        # Create test file if no files exist (for testing)
-        if [ "$USE_ENHANCED_FILES" = "true" ] && [ ! -d "enhanced" ]; then
-          echo "📝 Creating test enhanced directory and file..."
-          mkdir -p enhanced
-          echo '{"product": {"ProductID": "TEST001", "Name": "Test Product", "SKU": "TEST-SKU-001", "ShortDescription": "Test product for workflow testing", "ScrapedDate": "2025-01-25T12:00:00Z"}, "pricing": {"base_price": {"Price": 9.99}}, "attributes": {"colors": [{"Name": "Red"}]}}' > enhanced/test_enhanced.jsonl
-        fi
-        
-        if [ "$USE_ENHANCED_FILES" = "false" ] && [ ! -d "batch" ]; then
-          echo "📝 Creating test batch directory and file..."
-          mkdir -p batch
-          echo '{"ProductID": "TEST001", "Name": "Test Product", "SKU": "TEST-SKU-001", "ShortDescription": "Test product for workflow testing", "ScrapedDate": "2025-01-25T12:00:00Z"}' > batch/batch_test.jsonl
-        fi
-        
-        echo ""
-        
-        # Run the import script with proper authentication
+        # Run the import script
         python import_to_wordpress.py \
           --wp-api-url "$WP_API_URL" \
           --wp-api-key "$WP_API_KEY" \
