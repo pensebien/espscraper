@@ -8,109 +8,200 @@ for better organization and processing.
 
 import os
 import json
-import time
 import logging
 import shutil
 from datetime import datetime
-from typing import List, Dict, Any, Optional
-from dataclasses import asdict
+from typing import Dict, List, Any, Optional
+from dataclasses import dataclass, asdict
+import hashlib
 
-from .product_data import ProductData
+
+@dataclass
+class BatchStats:
+    """Statistics for batch processing"""
+    batch_count: int = 0
+    total_products: int = 0
+    unique_products: int = 0
+    duplicate_products: int = 0
+    total_size_bytes: int = 0
 
 
 class BatchProcessor:
-    """Handles batch processing and file management for product scraping"""
+    """Enhanced batch processor with deduplication and consolidation"""
 
     def __init__(
         self,
         batch_size: int = 100,
         batch_dir: str = "batch",
-        main_output_file: str = "espscraper/data/final_product_details.jsonl",
+        main_output_file: str = "final_product_details.jsonl",
         batch_prefix: str = "batch",
+        enable_deduplication: bool = True,
+        enable_consolidation: bool = True,
     ):
-
         self.batch_size = batch_size
         self.batch_dir = batch_dir
         self.main_output_file = main_output_file
         self.batch_prefix = batch_prefix
-
-        # Ensure batch directory exists
-        os.makedirs(self.batch_dir, exist_ok=True)
-
-        # Initialize batch tracking
+        self.enable_deduplication = enable_deduplication
+        self.enable_consolidation = enable_consolidation
+        
+        # Enhanced tracking
         self.current_batch = []
         self.batch_counter = 0
-        self.total_products_processed = 0
-
-        # Load existing batch info
-        self._load_batch_info()
-
+        self.stats = BatchStats()
+        
+        # Deduplication tracking
+        self.processed_product_ids = set()
+        self.batch_product_hashes = {}  # Track product content hashes
+        self.existing_batch_products = self._load_existing_batch_products()
+        
+        # Ensure batch directory exists
+        os.makedirs(self.batch_dir, exist_ok=True)
+        
         logging.info(
-            f"🔧 Batch processor initialized: batch_size={batch_size}, batch_dir={batch_dir}"
+            f"🔧 Enhanced batch processor initialized: batch_size={batch_size}, "
+            f"batch_dir={batch_dir}, deduplication={enable_deduplication}, "
+            f"consolidation={enable_consolidation}"
         )
 
-    def _load_batch_info(self):
-        """Load existing batch information"""
-        try:
-            # Count existing batch files
-            existing_batches = [
-                f
-                for f in os.listdir(self.batch_dir)
-                if f.startswith(self.batch_prefix) and f.endswith(".jsonl")
-            ]
-            self.batch_counter = len(existing_batches)
-
-            # Count total products in existing batches
-            total_products = 0
-            for batch_file in existing_batches:
-                batch_path = os.path.join(self.batch_dir, batch_file)
+    def _load_existing_batch_products(self) -> Dict[str, set]:
+        """Load existing products from all batch files to prevent duplicates"""
+        existing_products = {}
+        
+        if not os.path.exists(self.batch_dir):
+            return existing_products
+            
+        for filename in os.listdir(self.batch_dir):
+            if filename.startswith(self.batch_prefix) and filename.endswith(".jsonl"):
+                filepath = os.path.join(self.batch_dir, filename)
+                product_ids = set()
+                
                 try:
-                    with open(batch_path, "r") as f:
+                    with open(filepath, "r") as f:
                         for line in f:
-                            if line.strip():
-                                total_products += 1
+                            try:
+                                data = json.loads(line.strip())
+                                product_id = (
+                                    data.get("product_id") 
+                                    or data.get("productId") 
+                                    or data.get("id")
+                                )
+                                if product_id:
+                                    product_ids.add(str(product_id))
+                            except json.JSONDecodeError:
+                                continue
+                    
+                    existing_products[filename] = product_ids
+                    logging.debug(f"📄 Loaded {len(product_ids)} products from {filename}")
+                    
                 except Exception as e:
-                    logging.warning(f"⚠️ Error reading batch file {batch_file}: {e}")
+                    logging.warning(f"⚠️ Error loading products from {filename}: {e}")
+        
+        total_existing = sum(len(products) for products in existing_products.values())
+        logging.info(f"📊 Loaded {total_existing} existing products from {len(existing_products)} batch files")
+        
+        return existing_products
 
-            self.total_products_processed = total_products
-            logging.info(
-                f"📊 Loaded batch info: {self.batch_counter} batches, {total_products} products"
-            )
+    def _get_product_hash(self, product: Dict[str, Any]) -> str:
+        """Generate a hash for product content to detect duplicates"""
+        # Create a stable representation of the product
+        product_copy = product.copy()
+        
+        # Remove variable fields that shouldn't affect deduplication
+        product_copy.pop("extraction_time", None)
+        product_copy.pop("scraped_date", None)
+        product_copy.pop("SourceURL", None)
+        
+        # Sort keys for consistent hashing
+        sorted_product = json.dumps(product_copy, sort_keys=True, separators=(",", ":"))
+        return hashlib.md5(sorted_product.encode()).hexdigest()
 
-        except Exception as e:
-            logging.warning(f"⚠️ Error loading batch info: {e}")
+    def _is_duplicate_product(self, product: Dict[str, Any]) -> bool:
+        """Check if product is a duplicate based on ID and content"""
+        if not self.enable_deduplication:
+            return False
+            
+        product_id = (
+            product.get("product_id") 
+            or product.get("productId") 
+            or product.get("id")
+        )
+        
+        if not product_id:
+            return False
+            
+        product_id = str(product_id)
+        
+        # Check if product ID already processed in this session
+        if product_id in self.processed_product_ids:
+            logging.debug(f"🔄 Duplicate product ID detected: {product_id}")
+            return True
+            
+        # Check if product exists in any existing batch file
+        for filename, product_ids in self.existing_batch_products.items():
+            if product_id in product_ids:
+                logging.debug(f"🔄 Product {product_id} already exists in {filename}")
+                return True
+                
+        # Check content hash for exact duplicates
+        product_hash = self._get_product_hash(product)
+        if product_hash in self.batch_product_hashes:
+            existing_id = self.batch_product_hashes[product_hash]
+            logging.debug(f"🔄 Duplicate content detected: {product_id} matches {existing_id}")
+            return True
+            
+        return False
 
-    def add_product(self, product_data: ProductData) -> bool:
-        """Add a product to the current batch"""
+    def add_product(self, product: Dict[str, Any]) -> bool:
+        """Add a product to the current batch with deduplication"""
         try:
-            # Convert dataclass to dict
-            product_dict = asdict(product_data)
-
+            # Check for duplicates
+            if self._is_duplicate_product(product):
+                self.stats.duplicate_products += 1
+                logging.debug(f"⏭️ Skipping duplicate product: {product.get('product_id', 'unknown')}")
+                return True  # Return True since we successfully handled it
+                
             # Add to current batch
-            self.current_batch.append(product_dict)
-            self.total_products_processed += 1
-
-            # Check if batch is full
+            self.current_batch.append(product)
+            
+            # Track product
+            product_id = (
+                product.get("product_id") 
+                or product.get("productId") 
+                or product.get("id")
+            )
+            if product_id:
+                self.processed_product_ids.add(str(product_id))
+                product_hash = self._get_product_hash(product)
+                self.batch_product_hashes[product_hash] = str(product_id)
+            
+            self.stats.unique_products += 1
+            self.stats.total_products += 1
+            
+            # Save batch if it's full
             if len(self.current_batch) >= self.batch_size:
                 return self._save_current_batch()
-
+                
             return True
-
+            
         except Exception as e:
             logging.error(f"❌ Error adding product to batch: {e}")
             return False
 
     def _save_current_batch(self) -> bool:
-        """Save the current batch to a file"""
+        """Save the current batch to a file with enhanced naming"""
         if not self.current_batch:
             return True
 
         try:
-            # Create batch filename with timestamp
+            # Create batch filename with product count and timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.batch_counter += 1
+            product_count = len(self.current_batch)
+            
+            # Enhanced filename with product count
             batch_filename = (
-                f"{self.batch_prefix}_{timestamp}_{self.batch_counter}.jsonl"
+                f"{self.batch_prefix}_{timestamp}_{self.batch_counter}_{product_count}.jsonl"
             )
             batch_path = os.path.join(self.batch_dir, batch_filename)
 
@@ -131,10 +222,27 @@ class BatchProcessor:
 
                 # Atomic move
                 shutil.move(temp_path, batch_path)
+                
+                # Update stats
+                file_size = os.path.getsize(batch_path)
+                self.stats.total_size_bytes += file_size
+                self.stats.batch_count += 1
 
                 logging.info(
-                    f"💾 Saved batch {self.batch_counter}: {len(self.current_batch)} products -> {batch_filename}"
+                    f"💾 Saved batch {self.batch_counter}: {product_count} unique products -> {batch_filename} ({file_size:,} bytes)"
                 )
+                
+                # Update existing products tracking
+                product_ids = set()
+                for product in self.current_batch:
+                    product_id = (
+                        product.get("product_id") 
+                        or product.get("productId") 
+                        or product.get("id")
+                    )
+                    if product_id:
+                        product_ids.add(str(product_id))
+                self.existing_batch_products[batch_filename] = product_ids
 
                 # Clear current batch
                 self.current_batch = []
@@ -157,17 +265,134 @@ class BatchProcessor:
             return self._save_current_batch()
         return True
 
+    def consolidate_batches(self, target_batch_size: int = 100) -> bool:
+        """Consolidate small batch files into larger ones"""
+        if not self.enable_consolidation:
+            return True
+            
+        try:
+            logging.info(f"🔄 Consolidating batch files to target size: {target_batch_size}")
+            
+            # Get all batch files
+            batch_files = []
+            for filename in os.listdir(self.batch_dir):
+                if filename.startswith(self.batch_prefix) and filename.endswith(".jsonl"):
+                    filepath = os.path.join(self.batch_dir, filename)
+                    batch_files.append((filepath, os.path.getctime(filepath)))
+            
+            if not batch_files:
+                logging.info("ℹ️ No batch files to consolidate")
+                return True
+                
+            # Sort by creation time
+            batch_files.sort(key=lambda x: x[1])
+            
+            # Group small files for consolidation
+            consolidated_groups = []
+            current_group = []
+            current_size = 0
+            
+            for filepath, _ in batch_files:
+                try:
+                    with open(filepath, "r") as f:
+                        product_count = sum(1 for line in f if line.strip())
+                    
+                    if current_size + product_count <= target_batch_size:
+                        current_group.append(filepath)
+                        current_size += product_count
+                    else:
+                        if current_group:
+                            consolidated_groups.append(current_group)
+                        current_group = [filepath]
+                        current_size = product_count
+                        
+                except Exception as e:
+                    logging.warning(f"⚠️ Error reading {filepath}: {e}")
+                    continue
+            
+            # Add the last group
+            if current_group:
+                consolidated_groups.append(current_group)
+            
+            # Consolidate each group
+            consolidated_count = 0
+            for i, group in enumerate(consolidated_groups):
+                if len(group) > 1:  # Only consolidate if multiple files
+                    if self._consolidate_group(group, i + 1):
+                        consolidated_count += len(group)
+            
+            if consolidated_count > 0:
+                logging.info(f"✅ Consolidated {consolidated_count} batch files")
+            else:
+                logging.info("ℹ️ No consolidation needed")
+                
+            return True
+            
+        except Exception as e:
+            logging.error(f"❌ Error consolidating batches: {e}")
+            return False
+
+    def _consolidate_group(self, filepaths: List[str], group_id: int) -> bool:
+        """Consolidate a group of batch files into one"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            consolidated_filename = f"{self.batch_prefix}_consolidated_{timestamp}_group_{group_id}.jsonl"
+            consolidated_path = os.path.join(self.batch_dir, consolidated_filename)
+            
+            # Collect all products from the group
+            all_products = []
+            for filepath in filepaths:
+                try:
+                    with open(filepath, "r") as f:
+                        for line in f:
+                            if line.strip():
+                                product = json.loads(line)
+                                all_products.append(product)
+                except Exception as e:
+                    logging.warning(f"⚠️ Error reading {filepath}: {e}")
+                    continue
+            
+            # Remove duplicates based on product ID
+            unique_products = {}
+            for product in all_products:
+                product_id = (
+                    product.get("product_id") 
+                    or product.get("productId") 
+                    or product.get("id")
+                )
+                if product_id:
+                    unique_products[str(product_id)] = product
+            
+            # Write consolidated file
+            with open(consolidated_path, "w") as f:
+                for product in unique_products.values():
+                    json_line = json.dumps(product, ensure_ascii=False, separators=(",", ":")) + "\n"
+                    f.write(json_line)
+            
+            # Remove original files
+            for filepath in filepaths:
+                try:
+                    os.remove(filepath)
+                    logging.debug(f"🗑️ Removed {os.path.basename(filepath)}")
+                except Exception as e:
+                    logging.warning(f"⚠️ Could not remove {filepath}: {e}")
+            
+            logging.info(f"✅ Consolidated {len(filepaths)} files into {consolidated_filename} ({len(unique_products)} unique products)")
+            return True
+            
+        except Exception as e:
+            logging.error(f"❌ Error consolidating group: {e}")
+            return False
+
     def merge_batches_to_main(self) -> bool:
-        """Merge all batch files into the main output file"""
+        """Merge all batch files into the main output file with deduplication"""
         try:
             logging.info("🔄 Merging batch files into main output...")
 
             # Get all batch files sorted by creation time
             batch_files = []
             for filename in os.listdir(self.batch_dir):
-                if filename.startswith(self.batch_prefix) and filename.endswith(
-                    ".jsonl"
-                ):
+                if filename.startswith(self.batch_prefix) and filename.endswith(".jsonl"):
                     filepath = os.path.join(self.batch_dir, filename)
                     batch_files.append((filepath, os.path.getctime(filepath)))
 
@@ -177,9 +402,11 @@ class BatchProcessor:
                 logging.warning("⚠️ No batch files found to merge")
                 return True
 
-            # Create main output file with atomic write
+            # Create main output file with atomic write and deduplication
             temp_main = self.main_output_file + ".tmp"
             total_merged = 0
+            unique_products = {}
+            duplicate_count = 0
 
             try:
                 with open(temp_main, "w") as main_file:
@@ -189,15 +416,39 @@ class BatchProcessor:
                         with open(batch_path, "r") as batch_file:
                             for line in batch_file:
                                 if line.strip():
-                                    main_file.write(line)
-                                    total_merged += 1
+                                    try:
+                                        product = json.loads(line)
+                                        product_id = (
+                                            product.get("product_id") 
+                                            or product.get("productId") 
+                                            or product.get("id")
+                                        )
+                                        
+                                        if product_id:
+                                            product_id = str(product_id)
+                                            if product_id not in unique_products:
+                                                unique_products[product_id] = product
+                                                main_file.write(line)
+                                                total_merged += 1
+                                            else:
+                                                duplicate_count += 1
+                                        else:
+                                            # Product without ID, write it anyway
+                                            main_file.write(line)
+                                            total_merged += 1
+                                            
+                                    except json.JSONDecodeError:
+                                        logging.warning(f"⚠️ Invalid JSON in {batch_path}")
+                                        continue
 
                 # Atomic move
                 shutil.move(temp_main, self.main_output_file)
 
                 logging.info(
-                    f"✅ Successfully merged {len(batch_files)} batch files into main output: {total_merged} products"
+                    f"✅ Successfully merged {len(batch_files)} batch files into main output: "
+                    f"{total_merged} products ({duplicate_count} duplicates removed)"
                 )
+
                 return True
 
             except Exception as e:
@@ -210,224 +461,104 @@ class BatchProcessor:
             logging.error(f"❌ Error merging batches: {e}")
             return False
 
-    def cleanup_batches(self, keep_main: bool = True) -> bool:
-        """Clean up batch files after successful merge"""
+    def cleanup_batches(self, keep_recent: int = 5) -> bool:
+        """Clean up old batch files, keeping only the most recent ones"""
         try:
-            if not keep_main:
-                # Remove main output file if requested
-                if os.path.exists(self.main_output_file):
-                    os.remove(self.main_output_file)
-                    logging.info(f"🗑️ Removed main output file: {self.main_output_file}")
-
-            # Remove all batch files
-            removed_count = 0
+            logging.info(f"🧹 Cleaning up batch files (keeping {keep_recent} most recent)...")
+            
+            # Get all batch files with creation time
+            batch_files = []
             for filename in os.listdir(self.batch_dir):
-                if filename.startswith(self.batch_prefix) and filename.endswith(
-                    ".jsonl"
-                ):
+                if filename.startswith(self.batch_prefix) and filename.endswith(".jsonl"):
                     filepath = os.path.join(self.batch_dir, filename)
+                    batch_files.append((filepath, os.path.getctime(filepath)))
+            
+            if len(batch_files) <= keep_recent:
+                logging.info("ℹ️ No cleanup needed")
+                return True
+            
+            # Sort by creation time (oldest first)
+            batch_files.sort(key=lambda x: x[1])
+            
+            # Remove old files
+            files_to_remove = batch_files[:-keep_recent]
+            removed_count = 0
+            
+            for filepath, _ in files_to_remove:
+                try:
                     os.remove(filepath)
                     removed_count += 1
-
-            logging.info(f"🗑️ Cleaned up {removed_count} batch files")
+                    logging.debug(f"🗑️ Removed {os.path.basename(filepath)}")
+                except Exception as e:
+                    logging.warning(f"⚠️ Could not remove {filepath}: {e}")
+            
+            logging.info(f"✅ Cleaned up {removed_count} old batch files")
             return True
-
+            
         except Exception as e:
             logging.error(f"❌ Error cleaning up batches: {e}")
             return False
 
     def get_batch_stats(self) -> Dict[str, Any]:
-        """Get statistics about batches"""
-        try:
-            batch_files = [
-                f
-                for f in os.listdir(self.batch_dir)
-                if f.startswith(self.batch_prefix) and f.endswith(".jsonl")
-            ]
+        """Get comprehensive batch processing statistics"""
+        return {
+            "batch_count": self.stats.batch_count,
+            "total_products": self.stats.total_products,
+            "unique_products": self.stats.unique_products,
+            "duplicate_products": self.stats.duplicate_products,
+            "total_size_bytes": self.stats.total_size_bytes,
+            "duplication_rate": (
+                (self.stats.duplicate_products / self.stats.total_products * 100)
+                if self.stats.total_products > 0 else 0
+            ),
+            "current_batch_size": len(self.current_batch),
+            "processed_product_ids": len(self.processed_product_ids),
+            "existing_batch_files": len(self.existing_batch_products)
+        }
 
-            total_products = 0
-            for batch_file in batch_files:
-                batch_path = os.path.join(self.batch_dir, batch_file)
-                try:
-                    with open(batch_path, "r") as f:
-                        for line in f:
-                            if line.strip():
-                                total_products += 1
-                except Exception:
-                    continue
-
-            return {
-                "batch_count": len(batch_files),
-                "total_products": total_products,
-                "current_batch_size": len(self.current_batch),
-                "batch_size_limit": self.batch_size,
-                "batch_directory": self.batch_dir,
-                "main_output_file": self.main_output_file,
-            }
-
-        except Exception as e:
-            logging.error(f"❌ Error getting batch stats: {e}")
-            return {}
-
-    def validate_batches(self) -> bool:
-        """Validate all batch files for JSON integrity"""
-        try:
-            batch_files = [
-                f
-                for f in os.listdir(self.batch_dir)
-                if f.startswith(self.batch_prefix) and f.endswith(".jsonl")
-            ]
-
-            total_invalid = 0
-            total_valid = 0
-
-            for batch_file in batch_files:
-                batch_path = os.path.join(self.batch_dir, batch_file)
-                file_invalid = 0
-                file_valid = 0
-
-                try:
-                    with open(batch_path, "r") as f:
-                        for line_num, line in enumerate(f, 1):
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                json.loads(line)
-                                file_valid += 1
-                            except json.JSONDecodeError:
-                                file_invalid += 1
-                                logging.warning(
-                                    f"⚠️ Invalid JSON in {batch_file} line {line_num}"
-                                )
-
-                    total_valid += file_valid
-                    total_invalid += file_invalid
-
-                    if file_invalid > 0:
-                        logging.warning(
-                            f"⚠️ {batch_file}: {file_invalid} invalid lines, {file_valid} valid lines"
-                        )
-                    else:
-                        logging.debug(f"✅ {batch_file}: {file_valid} valid lines")
-
-                except Exception as e:
-                    logging.error(f"❌ Error validating {batch_file}: {e}")
-                    total_invalid += 1
-
-            logging.info(
-                f"📊 Batch validation complete: {total_valid} valid, {total_invalid} invalid lines across {len(batch_files)} files"
-            )
-            return total_invalid == 0
-
-        except Exception as e:
-            logging.error(f"❌ Error during batch validation: {e}")
-            return False
-
-    def process_batches_for_import(
-        self, limit: int, mode: str, existing_products: Optional[Dict[str, Any]] = None
-    ):
-        """
-        Yield products for import up to the global limit, respecting mode.
-        - mode: 'sync' (only new or updated products) or 'override' (all products)
-        - existing_products: dict mapping product_id to last update date in store
-        """
-        imported = 0
-        batch_files = [
-            f
-            for f in sorted(os.listdir(self.batch_dir))
-            if f.startswith(self.batch_prefix) and f.endswith(".jsonl")
-        ]
-        for batch_file in batch_files:
-            batch_path = os.path.join(self.batch_dir, batch_file)
-            with open(batch_path, "r") as f:
-                for line in f:
-                    if imported >= limit:
-                        return
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        product = json.loads(line)
-                        product_id = str(
-                            product.get("ProductID") or product.get("product_id")
-                        )
-                        scraped_date = product.get("scrapedDate") or product.get(
-                            "scraped_date"
-                        )
-                        if mode == "sync" and existing_products:
-                            store_info = existing_products.get(product_id)
-                            if store_info:
-                                store_date = store_info.get(
-                                    "last_modified"
-                                ) or store_info.get("last_updated")
-                                if (
-                                    store_date
-                                    and scraped_date
-                                    and scraped_date <= store_date
-                                ):
-                                    continue  # skip, not newer
-                        yield product
-                        imported += 1
-                    except Exception as e:
-                        logging.warning(
-                            f"⚠️ Error processing product in {batch_file}: {e}"
-                        )
+    def print_stats(self):
+        """Print batch processing statistics"""
+        stats = self.get_batch_stats()
+        logging.info("📊 Batch Processing Statistics:")
+        logging.info(f"   Batches created: {stats['batch_count']}")
+        logging.info(f"   Total products processed: {stats['total_products']:,}")
+        logging.info(f"   Unique products: {stats['unique_products']:,}")
+        logging.info(f"   Duplicate products: {stats['duplicate_products']:,}")
+        logging.info(f"   Duplication rate: {stats['duplication_rate']:.1f}%")
+        logging.info(f"   Total size: {stats['total_size_bytes']:,} bytes")
+        logging.info(f"   Current batch size: {stats['current_batch_size']}")
+        logging.info(f"   Processed product IDs: {stats['processed_product_ids']:,}")
+        logging.info(f"   Existing batch files: {stats['existing_batch_files']}")
 
 
 def main():
-    """Test the batch processor"""
+    """Test the enhanced batch processor"""
     import argparse
-
-    parser = argparse.ArgumentParser(description="Batch Processor for ESP Scraper")
+    
+    parser = argparse.ArgumentParser(description="Enhanced Batch Processor")
     parser.add_argument("--batch-size", type=int, default=100, help="Batch size")
-    parser.add_argument("--batch-dir", default="batches", help="Batch directory")
-    parser.add_argument(
-        "--validate", action="store_true", help="Validate existing batches"
-    )
-    parser.add_argument(
-        "--merge", action="store_true", help="Merge batches to main output"
-    )
-    parser.add_argument(
-        "--cleanup", action="store_true", help="Clean up batch files after merge"
-    )
-    parser.add_argument("--stats", action="store_true", help="Show batch statistics")
-
+    parser.add_argument("--batch-dir", default="batch", help="Batch directory")
+    parser.add_argument("--consolidate", action="store_true", help="Consolidate small batches")
+    parser.add_argument("--cleanup", action="store_true", help="Clean up old batches")
+    parser.add_argument("--stats", action="store_true", help="Show statistics")
+    
     args = parser.parse_args()
-
-    # Set up logging
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    
+    processor = BatchProcessor(
+        batch_size=args.batch_size,
+        batch_dir=args.batch_dir,
+        enable_deduplication=True,
+        enable_consolidation=True
     )
-
-    processor = BatchProcessor(batch_size=args.batch_size, batch_dir=args.batch_dir)
-
-    if args.stats:
-        stats = processor.get_batch_stats()
-        print("📊 Batch Statistics:")
-        for key, value in stats.items():
-            print(f"  {key}: {value}")
-
-    if args.validate:
-        print("🔍 Validating batches...")
-        if processor.validate_batches():
-            print("✅ All batches are valid")
-        else:
-            print("❌ Some batches have issues")
-
-    if args.merge:
-        print("🔄 Merging batches...")
-        if processor.merge_batches_to_main():
-            print("✅ Merge completed successfully")
-        else:
-            print("❌ Merge failed")
-
+    
+    if args.consolidate:
+        processor.consolidate_batches()
+    
     if args.cleanup:
-        print("🗑️ Cleaning up batch files...")
-        if processor.cleanup_batches():
-            print("✅ Cleanup completed")
-        else:
-            print("❌ Cleanup failed")
+        processor.cleanup_batches()
+    
+    if args.stats:
+        processor.print_stats()
 
 
 if __name__ == "__main__":

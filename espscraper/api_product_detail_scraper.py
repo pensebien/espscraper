@@ -176,11 +176,13 @@ class ApiProductDetailScraper(BaseScraper):
         self.current_batch = []
         self.batch_start_time = time.time()
 
-        # Initialize batch processor
+        # Initialize enhanced batch processor with deduplication
         self.batch_processor = BatchProcessor(
             batch_size=self.config.batch_size,
             batch_dir="batch",
             main_output_file=self.OUTPUT_FILE,
+            enable_deduplication=True,
+            enable_consolidation=True,
         )
 
         # Ensure output directory exists
@@ -1164,7 +1166,7 @@ class ApiProductDetailScraper(BaseScraper):
             return False
 
     def _finalize_batches(self):
-        """Finalize batch processing by flushing and merging"""
+        """Finalize batch processing with enhanced consolidation and cleanup"""
         try:
             logging.info("🔄 Finalizing batch processing...")
 
@@ -1173,22 +1175,27 @@ class ApiProductDetailScraper(BaseScraper):
                 logging.error("❌ Failed to flush final batch")
                 return False
 
-            # Get batch statistics
-            stats = self.batch_processor.get_batch_stats()
-            logging.info(
-                f"📊 Batch stats: {stats['batch_count']} batches, {stats['total_products']} products"
-            )
+            # Print batch statistics
+            self.batch_processor.print_stats()
 
-            # Merge batches to main output file
+            # Consolidate small batch files into larger ones
+            logging.info("🔄 Consolidating small batch files...")
+            if not self.batch_processor.consolidate_batches(target_batch_size=50):
+                logging.warning("⚠️ Failed to consolidate batches, continuing...")
+
+            # Merge batches to main output file with deduplication
+            stats = self.batch_processor.get_batch_stats()
             if stats["batch_count"] > 0:
                 if not self.batch_processor.merge_batches_to_main():
                     logging.error("❌ Failed to merge batches to main output")
                     return False
 
-                logging.info("✅ Successfully merged all batches to main output")
+                logging.info("✅ Successfully merged all batches to main output with deduplication")
 
-                # Optionally cleanup batch files (keep them for now)
-                # self.batch_processor.cleanup_batches()
+                # Clean up old batch files, keeping only the 5 most recent
+                logging.info("🧹 Cleaning up old batch files...")
+                if not self.batch_processor.cleanup_batches(keep_recent=5):
+                    logging.warning("⚠️ Failed to cleanup batch files, continuing...")
 
             return True
 
