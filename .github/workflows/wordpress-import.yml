@@ -78,11 +78,24 @@ jobs:
         echo "WP_API_URL=$API_URL" >> $GITHUB_ENV
         echo "WP_API_KEY=$API_KEY" >> $GITHUB_ENV
         
-        # Set Basic Auth credentials for local development using GitHub Secrets
+        # Load Basic Auth credentials from .env.dev file for local development
         if [ "$ENVIRONMENT" = "development" ]; then
-          echo "WP_BASIC_AUTH_USER=${{ secrets.WP_BASIC_AUTH_USER_DEV }}" >> $GITHUB_ENV
-          echo "WP_BASIC_AUTH_PASS=${{ secrets.WP_BASIC_AUTH_PASS_DEV }}" >> $GITHUB_ENV
-          echo "✅ Basic Auth credentials set for local development from GitHub Secrets"
+          echo "📁 Loading Basic Auth credentials from .env.dev file..."
+          
+          # Source the .env.dev file to get the variables
+          if [ -f ".env.dev" ]; then
+            # Read the Basic Auth credentials from .env.dev
+            WP_BASIC_AUTH_USER=$(grep "^WP_BASIC_AUTH_USER=" .env.dev | cut -d'=' -f2)
+            WP_BASIC_AUTH_PASS=$(grep "^WP_BASIC_AUTH_PASS=" .env.dev | cut -d'=' -f2)
+            
+            echo "WP_BASIC_AUTH_USER=$WP_BASIC_AUTH_USER" >> $GITHUB_ENV
+            echo "WP_BASIC_AUTH_PASS=$WP_BASIC_AUTH_PASS" >> $GITHUB_ENV
+            echo "✅ Basic Auth credentials loaded from .env.dev file"
+            echo "User: ${WP_BASIC_AUTH_USER:0:3}..."
+            echo "Pass: ${WP_BASIC_AUTH_PASS:0:3}..."
+          else
+            echo "⚠️ .env.dev file not found, skipping Basic Auth"
+          fi
         fi
         
     - name: Copy artifacts from artifacts branch
