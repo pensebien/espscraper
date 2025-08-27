@@ -945,6 +945,12 @@ def main():
         "--skip-art-templates", action="store_true",
         help="Skip downloading art templates (faster processing)"
     )
+    
+    # Testing mode
+    parser.add_argument(
+        "--test-mode", action="store_true",
+        help="Run in test mode to verify parameters (doesn't process files)"
+    )
 
     args = parser.parse_args()
 
@@ -956,6 +962,22 @@ def main():
 
     # Create optimized processor
     art_processor = SingleRequestArtProcessor(max_concurrent=args.max_concurrent)
+
+    # Test mode - just verify parameters
+    if args.test_mode:
+        print("🧪 Running in test mode...")
+        print("✅ Parameters verified:")
+        print(f"   Batch directory: {args.batch_dir}")
+        print(f"   Max workers: {args.max_workers}")
+        print(f"   Max concurrent: {args.max_concurrent}")
+        print(f"   Log level: {args.log_level}")
+        print(f"   Max batch files: {args.max_batch_files}")
+        print(f"   Start batch index: {args.start_batch_index}")
+        print(f"   Max time minutes: {args.max_time_minutes}")
+        print(f"   Workflow state file: {args.workflow_state_file}")
+        print(f"   Skip art templates: {args.skip_art_templates}")
+        print("✅ All parameters accepted - script is ready to use!")
+        return True
 
     # Create enhancer
     enhancer = OptimizedBatchFileEnhancer(
