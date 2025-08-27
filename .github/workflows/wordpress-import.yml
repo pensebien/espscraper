@@ -78,11 +78,11 @@ jobs:
         echo "WP_API_URL=$API_URL" >> $GITHUB_ENV
         echo "WP_API_KEY=$API_KEY" >> $GITHUB_ENV
         
-        # Set Basic Auth credentials for local development
+        # Set Basic Auth credentials for local development using GitHub Secrets
         if [ "$ENVIRONMENT" = "development" ]; then
-          echo "WP_BASIC_AUTH_USER=admin" >> $GITHUB_ENV
-          echo "WP_BASIC_AUTH_PASS=admin" >> $GITHUB_ENV
-          echo "✅ Basic Auth credentials set for local development"
+          echo "WP_BASIC_AUTH_USER=${{ secrets.WP_BASIC_AUTH_USER_DEV }}" >> $GITHUB_ENV
+          echo "WP_BASIC_AUTH_PASS=${{ secrets.WP_BASIC_AUTH_PASS_DEV }}" >> $GITHUB_ENV
+          echo "✅ Basic Auth credentials set for local development from GitHub Secrets"
         fi
         
     - name: Copy artifacts from artifacts branch
