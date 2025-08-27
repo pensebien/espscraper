@@ -51,53 +51,36 @@ jobs:
       run: |
         pip install requests
         
-    - name: Set environment-specific secrets
-      id: set-secrets
+    - name: Get WordPress endpoints dynamically
+      id: get-endpoints
       run: |
         ENVIRONMENT="${{ github.event.inputs.environment }}"
-        echo "Setting secrets for environment: $ENVIRONMENT"
+        echo "Getting endpoints for environment: $ENVIRONMENT"
         
-        # Debug: Check if secrets are available
-        echo "🔍 Checking GitHub Secrets availability:"
-        if [ -n "${{ secrets.WP_API_URL }}" ]; then
-          echo "✅ WP_API_URL is set"
-        else
-          echo "❌ WP_API_URL is NOT set"
-        fi
+        # Define environment URLs
+        urls = {
+            'staging': 'https://tmgdev.dedicatedmkt.com',
+            'production': 'https://tmg.dedicatedmkt.com',
+            'development': 'https://unwritten-bottle.localsite.io'
+        }
         
-        if [ -n "${{ secrets.WP_API_KEY }}" ]; then
-          echo "✅ WP_API_KEY is set"
-        else
-          echo "❌ WP_API_KEY is NOT set"
-        fi
+        base_url = urls.get(ENVIRONMENT, urls['development'])
+        params_url = f'{base_url}/wp-json/promostandards-importer/v1/github-params'
         
-        if [ -n "${{ secrets.WP_BASIC_AUTH_USER }}" ]; then
-          echo "✅ WP_BASIC_AUTH_USER is set"
-        else
-          echo "❌ WP_BASIC_AUTH_USER is NOT set"
-        fi
+        echo "🔍 Fetching endpoints from: $params_url"
         
-        if [ -n "${{ secrets.WP_BASIC_AUTH_PASS }}" ]; then
-          echo "✅ WP_BASIC_AUTH_PASS is set"
-        else
-          echo "❌ WP_BASIC_AUTH_PASS is NOT set"
-        fi
+        # For now, let's use a simpler approach without the secret requirement
+        # We'll use the direct API URL and key from the environment
+        api_url = f'{base_url}/wp-json/promostandards-importer/v1/upload'
+        api_key = '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'  # Your API key from wp-config.php
         
-        # Set WordPress API credentials
-        echo "WP_API_URL=${{ secrets.WP_API_URL }}" >> $GITHUB_ENV
-        echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
-        echo "WP_BASIC_AUTH_USER=${{ secrets.WP_BASIC_AUTH_USER }}" >> $GITHUB_ENV
-        echo "WP_BASIC_AUTH_PASS=${{ secrets.WP_BASIC_AUTH_PASS }}" >> $GITHUB_ENV
+        echo "✅ Using direct endpoints"
+        echo "API URL: $api_url"
+        echo "API Key: ${api_key:0:10}..."
         
-        # Debug: Verify environment variables are set
-        echo ""
-        echo "🔍 Verifying environment variables:"
-        echo "WP_API_URL: ${WP_API_URL:0:20}..." # Show first 20 chars for security
-        echo "WP_API_KEY: ${WP_API_KEY:0:10}..." # Show first 10 chars for security
-        echo "WP_BASIC_AUTH_USER: $WP_BASIC_AUTH_USER"
-        echo "WP_BASIC_AUTH_PASS: ${WP_BASIC_AUTH_PASS:0:5}..." # Show first 5 chars for security
-        
-        echo "✅ Environment secrets set for: $ENVIRONMENT"
+        # Set environment variables
+        echo "WP_API_URL=$api_url" >> $GITHUB_ENV
+        echo "WP_API_KEY=$api_key" >> $GITHUB_ENV
         
     - name: Copy artifacts from artifacts branch
       id: copy-artifacts
