@@ -44,6 +44,11 @@ on:
         required: false
         type: boolean
         default: true
+      skip_art_templates:
+        description: 'Skip downloading art templates (faster processing)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -184,7 +189,8 @@ jobs:
               --batch-dir batch \
               --log-level DEBUG \
               $([ "${{ github.event.inputs.force_reprocess }}" = "true" ] && echo "--force-reprocess") \
-              $([ "${{ github.event.inputs.resume }}" = "true" ] && echo "--resume")
+              $([ "${{ github.event.inputs.resume }}" = "true" ] && echo "--resume") \
+              $([ "${{ github.event.inputs.skip_art_templates }}" = "true" ] && echo "--skip-art-templates")
               
           else
             echo "📄 Processing ALL batch files with chunking..."
@@ -209,7 +215,8 @@ jobs:
               --start-batch-index "$START_BATCH_INDEX" \
               --max-time-minutes "$MAX_TIME_MINUTES" \
               --workflow-state-file "enhanced/workflow_state.json" \
-              $([ "${{ github.event.inputs.force_reprocess }}" = "true" ] && echo "--force-reprocess")
+              $([ "${{ github.event.inputs.force_reprocess }}" = "true" ] && echo "--force-reprocess") \
+              $([ "${{ github.event.inputs.skip_art_templates }}" = "true" ] && echo "--skip-art-templates")
           fi
 
       - name: Check results and prepare for auto-restart
@@ -316,7 +323,8 @@ jobs:
                 "start_batch_index": "'$NEXT_INDEX'",
                 "resume": "true",
                 "auto_restart": "${{ github.event.inputs.auto_restart }}",
-                "force_reprocess": "${{ github.event.inputs.force_reprocess }}"
+                "force_reprocess": "${{ github.event.inputs.force_reprocess }}",
+                "skip_art_templates": "${{ github.event.inputs.skip_art_templates }}"
               }
             }'
           
@@ -359,3 +367,4 @@ jobs:
           echo "- Smart chunking prevents timeout issues"
           echo "- Auto-restart capability for large batch processing"
           echo "- State persistence for reliable resuming"
+          echo "- Optional art template downloading (use skip_art_templates for faster processing)"

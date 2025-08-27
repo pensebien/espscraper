@@ -525,9 +525,10 @@ class SingleRequestArtProcessor:
 class OptimizedBatchFileEnhancer:
     """Optimized batch file enhancer using single request approach"""
 
-    def __init__(self, art_processor: SingleRequestArtProcessor, max_workers: int = 5):
+    def __init__(self, art_processor: SingleRequestArtProcessor, max_workers: int = 5, skip_art_templates: bool = False):
         self.art_processor = art_processor
         self.max_workers = max_workers
+        self.skip_art_templates = skip_art_templates
         self.enhanced_count = 0
         self.error_count = 0
 
@@ -749,13 +750,16 @@ class OptimizedBatchFileEnhancer:
             if all_data.get("art_template_url"):
                 enhanced_product["product_art_url"] = all_data["art_template_url"]
 
-                # Download art template
-                local_file = self.art_processor.download_art_template(
-                    all_data["art_template_url"],
-                    enhanced_product.get("product_number", ""),
-                )
-                if local_file:
-                    enhanced_product["art_template_local_file"] = local_file
+                # Download art template only if not skipped
+                if not hasattr(self, 'skip_art_templates') or not self.skip_art_templates:
+                    local_file = self.art_processor.download_art_template(
+                        all_data["art_template_url"],
+                        enhanced_product.get("product_number", ""),
+                    )
+                    if local_file:
+                        enhanced_product["art_template_local_file"] = local_file
+                else:
+                    logging.info(f"⏭️ Skipping art template download for product {enhanced_product.get('product_number', 'unknown')}")
 
             logging.info(
                 f"✅ Enhanced product {enhanced_product.get('product_id', 'unknown')} with flattened structure"
@@ -935,6 +939,12 @@ def main():
         "--workflow-state-file", type=str, default=None,
         help="Path to save workflow state for chunking"
     )
+    
+    # Art template control
+    parser.add_argument(
+        "--skip-art-templates", action="store_true",
+        help="Skip downloading art templates (faster processing)"
+    )
 
     args = parser.parse_args()
 
@@ -948,7 +958,11 @@ def main():
     art_processor = SingleRequestArtProcessor(max_concurrent=args.max_concurrent)
 
     # Create enhancer
-    enhancer = OptimizedBatchFileEnhancer(art_processor, max_workers=args.max_workers)
+    enhancer = OptimizedBatchFileEnhancer(
+        art_processor, 
+        max_workers=args.max_workers,
+        skip_art_templates=args.skip_art_templates
+    )
 
     # Enhance all batch files with chunking parameters
     result = enhancer.enhance_all_batch_files(
