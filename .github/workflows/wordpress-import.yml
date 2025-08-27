@@ -57,30 +57,26 @@ jobs:
         ENVIRONMENT="${{ github.event.inputs.environment }}"
         echo "Getting endpoints for environment: $ENVIRONMENT"
         
-        # Define environment URLs
-        urls = {
-            'staging': 'https://tmgdev.dedicatedmkt.com',
-            'production': 'https://tmg.dedicatedmkt.com',
-            'development': 'https://unwritten-bottle.localsite.io'
-        }
+        # Define environment URLs using bash
+        if [ "$ENVIRONMENT" = "staging" ]; then
+          BASE_URL="https://tmgdev.dedicatedmkt.com"
+        elif [ "$ENVIRONMENT" = "production" ]; then
+          BASE_URL="https://tmg.dedicatedmkt.com"
+        else
+          BASE_URL="https://unwritten-bottle.localsite.io"
+        fi
         
-        base_url = urls.get(ENVIRONMENT, urls['development'])
-        params_url = f'{base_url}/wp-json/promostandards-importer/v1/github-params'
-        
-        echo "🔍 Fetching endpoints from: $params_url"
-        
-        # For now, let's use a simpler approach without the secret requirement
-        # We'll use the direct API URL and key from the environment
-        api_url = f'{base_url}/wp-json/promostandards-importer/v1/upload'
-        api_key = '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'  # Your API key from wp-config.php
+        API_URL="$BASE_URL/wp-json/promostandards-importer/v1/upload"
+        API_KEY="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"
         
         echo "✅ Using direct endpoints"
-        echo "API URL: $api_url"
-        echo "API Key: ${api_key:0:10}..."
+        echo "Base URL: $BASE_URL"
+        echo "API URL: $API_URL"
+        echo "API Key: ${API_KEY:0:10}..."
         
         # Set environment variables
-        echo "WP_API_URL=$api_url" >> $GITHUB_ENV
-        echo "WP_API_KEY=$api_key" >> $GITHUB_ENV
+        echo "WP_API_URL=$API_URL" >> $GITHUB_ENV
+        echo "WP_API_KEY=$API_KEY" >> $GITHUB_ENV
         
     - name: Copy artifacts from artifacts branch
       id: copy-artifacts
