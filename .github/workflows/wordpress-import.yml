@@ -57,11 +57,45 @@ jobs:
         ENVIRONMENT="${{ github.event.inputs.environment }}"
         echo "Setting secrets for environment: $ENVIRONMENT"
         
+        # Debug: Check if secrets are available
+        echo "🔍 Checking GitHub Secrets availability:"
+        if [ -n "${{ secrets.WP_API_URL }}" ]; then
+          echo "✅ WP_API_URL is set"
+        else
+          echo "❌ WP_API_URL is NOT set"
+        fi
+        
+        if [ -n "${{ secrets.WP_API_KEY }}" ]; then
+          echo "✅ WP_API_KEY is set"
+        else
+          echo "❌ WP_API_KEY is NOT set"
+        fi
+        
+        if [ -n "${{ secrets.WP_BASIC_AUTH_USER }}" ]; then
+          echo "✅ WP_BASIC_AUTH_USER is set"
+        else
+          echo "❌ WP_BASIC_AUTH_USER is NOT set"
+        fi
+        
+        if [ -n "${{ secrets.WP_BASIC_AUTH_PASS }}" ]; then
+          echo "✅ WP_BASIC_AUTH_PASS is set"
+        else
+          echo "❌ WP_BASIC_AUTH_PASS is NOT set"
+        fi
+        
         # Set WordPress API credentials
         echo "WP_API_URL=${{ secrets.WP_API_URL }}" >> $GITHUB_ENV
         echo "WP_API_KEY=${{ secrets.WP_API_KEY }}" >> $GITHUB_ENV
         echo "WP_BASIC_AUTH_USER=${{ secrets.WP_BASIC_AUTH_USER }}" >> $GITHUB_ENV
         echo "WP_BASIC_AUTH_PASS=${{ secrets.WP_BASIC_AUTH_PASS }}" >> $GITHUB_ENV
+        
+        # Debug: Verify environment variables are set
+        echo ""
+        echo "🔍 Verifying environment variables:"
+        echo "WP_API_URL: ${WP_API_URL:0:20}..." # Show first 20 chars for security
+        echo "WP_API_KEY: ${WP_API_KEY:0:10}..." # Show first 10 chars for security
+        echo "WP_BASIC_AUTH_USER: $WP_BASIC_AUTH_USER"
+        echo "WP_BASIC_AUTH_PASS: ${WP_BASIC_AUTH_PASS:0:5}..." # Show first 5 chars for security
         
         echo "✅ Environment secrets set for: $ENVIRONMENT"
         
@@ -118,6 +152,18 @@ jobs:
           echo "📁 Batch files:"
           ls -la batch/
         fi
+        echo ""
+        
+        # Debug: Show what will be passed to Python script
+        echo ""
+        echo "🔍 Python script parameters:"
+        echo "WP_API_URL: ${WP_API_URL:0:20}..."
+        echo "WP_API_KEY: ${WP_API_KEY:0:10}..."
+        echo "IMPORT_MODE: $IMPORT_MODE"
+        echo "PRODUCT_LIMIT: $PRODUCT_LIMIT"
+        echo "USE_ENHANCED_FILES: $USE_ENHANCED_FILES"
+        echo "WP_BASIC_AUTH_USER: $WP_BASIC_AUTH_USER"
+        echo "WP_BASIC_AUTH_PASS: ${WP_BASIC_AUTH_PASS:0:5}..."
         echo ""
         
         # Run the import script
