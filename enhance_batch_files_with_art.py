@@ -766,8 +766,10 @@ class OptimizedBatchFileEnhancer:
             logging.error(f"❌ Error enhancing product with data: {e}")
             return product
 
-    def enhance_all_batch_files(self, batch_dir: str = "batch") -> Dict:
-        """Enhance all batch files in a directory"""
+    def enhance_all_batch_files(self, batch_dir: str = "batch", max_batch_files: int = None, 
+                               start_batch_index: int = 0, max_time_minutes: int = None,
+                               workflow_state_file: str = None) -> Dict:
+        """Enhance all batch files in a directory with optional chunking"""
         start_time = time.time()
 
         try:
@@ -789,39 +791,109 @@ class OptimizedBatchFileEnhancer:
                 logging.warning(f"⚠️ No batch files found in {batch_dir}")
                 return {"success": False, "error": "No batch files found"}
 
-            logging.info(f"📁 Found {len(batch_files)} batch files to enhance")
+            # Sort batch files for consistent processing order
+            batch_files.sort()
 
-            # Enhance each batch file
-            for i, batch_file in enumerate(batch_files, 1):
+            # Apply chunking parameters
+            total_batch_files = len(batch_files)
+            end_batch_index = total_batch_files
+            
+            if max_batch_files:
+                end_batch_index = min(start_batch_index + max_batch_files, total_batch_files)
+            
+            # Get files for this chunk
+            chunk_files = batch_files[start_batch_index:end_batch_index]
+            
+            logging.info(f"📁 Found {total_batch_files} total batch files")
+            logging.info(f"🔄 Processing chunk: files {start_batch_index + 1}-{end_batch_index} ({len(chunk_files)} files)")
+            logging.info(f"📄 Chunk files: {[os.path.basename(f) for f in chunk_files]}")
+
+            # Enhance each batch file in the chunk
+            processed_files = []
+            for i, batch_file in enumerate(chunk_files, 1):
+                current_time = time.time()
+                elapsed_minutes = (current_time - start_time) / 60
+                
+                # Check time limit
+                if max_time_minutes and elapsed_minutes >= max_time_minutes:
+                    logging.warning(f"⏰ Time limit reached ({elapsed_minutes:.1f} minutes >= {max_time_minutes} minutes)")
+                    logging.info(f"🛑 Stopping processing after {i-1} files in this chunk")
+                    break
+                
                 logging.info(
-                    f"🔄 Processing file {i}/{len(batch_files)}: {os.path.basename(batch_file)}"
+                    f"🔄 Processing file {start_batch_index + i}/{total_batch_files}: {os.path.basename(batch_file)}"
                 )
 
                 success = self.enhance_batch_file(batch_file)
                 if success:
+                    processed_files.append(os.path.basename(batch_file))
                     # Be nice to the server
-                    if i < len(batch_files):
+                    if i < len(chunk_files):
                         time.sleep(1)
 
             total_time = time.time() - start_time
 
+            # Create workflow state for chunking
+            workflow_state = {
+                "total_batch_files": total_batch_files,
+                "processed_batch_files": start_batch_index + len(processed_files),
+                "current_batch_index": start_batch_index + len(processed_files),
+                "elapsed_time_minutes": total_time / 60,
+                "max_time_minutes": max_time_minutes,
+                "batch_files_per_run": max_batch_files,
+                "status": "in_progress" if (start_batch_index + len(processed_files)) < total_batch_files else "completed",
+                "remaining_batch_files": [os.path.basename(f) for f in batch_files[start_batch_index + len(processed_files):]],
+                "completed_batch_files": [os.path.basename(f) for f in batch_files[:start_batch_index + len(processed_files)]],
+                "processed_in_this_run": processed_files,
+                "resume_data": {
+                    "last_processed_batch": os.path.basename(batch_files[start_batch_index + len(processed_files) - 1]) if processed_files else None,
+                    "last_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "next_batch_index": start_batch_index + len(processed_files)
+                }
+            }
+
+            # Save workflow state if requested
+            if workflow_state_file:
+                try:
+                    os.makedirs(os.path.dirname(workflow_state_file), exist_ok=True)
+                    with open(workflow_state_file, 'w') as f:
+                        json.dump(workflow_state, f, indent=2)
+                    logging.info(f"💾 Workflow state saved to: {workflow_state_file}")
+                except Exception as e:
+                    logging.error(f"❌ Error saving workflow state: {e}")
+
             # Summary
             summary = {
                 "success": True,
-                "total_files": len(batch_files),
+                "total_files": total_batch_files,
+                "processed_in_chunk": len(processed_files),
                 "enhanced_files": self.enhanced_count,
                 "error_files": self.error_count,
                 "total_time": total_time,
+                "elapsed_minutes": total_time / 60,
                 "enhanced_batch_dir": os.path.abspath(
                     os.path.join(batch_dir, "..", "enhanced")
                 ),
+                "workflow_state": workflow_state,
+                "chunking_info": {
+                    "start_index": start_batch_index,
+                    "end_index": start_batch_index + len(processed_files),
+                    "max_batch_files": max_batch_files,
+                    "max_time_minutes": max_time_minutes,
+                    "time_limit_reached": max_time_minutes and (total_time / 60) >= max_time_minutes
+                }
             }
 
             logging.info(f"✅ Batch enhancement completed:")
             logging.info(f"   📁 Total files: {summary['total_files']}")
+            logging.info(f"   🔄 Processed in chunk: {summary['processed_in_chunk']}")
             logging.info(f"   ✅ Enhanced: {summary['enhanced_files']}")
             logging.info(f"   ❌ Errors: {summary['error_files']}")
-            logging.info(f"   ⏱️  Processing time: {total_time:.2f}s")
+            logging.info(f"   ⏱️  Processing time: {total_time:.2f}s ({total_time/60:.1f} minutes)")
+            
+            if workflow_state["status"] == "in_progress":
+                logging.info(f"   🔄 More files remaining: {len(workflow_state['remaining_batch_files'])}")
+                logging.info(f"   📄 Next batch index: {workflow_state['resume_data']['next_batch_index']}")
 
             return summary
 
@@ -845,6 +917,24 @@ def main():
         "--max-concurrent", type=int, default=10, help="Max concurrent requests"
     )
     parser.add_argument("--log-level", default="INFO", help="Logging level")
+    
+    # New chunking parameters (backward compatible)
+    parser.add_argument(
+        "--max-batch-files", type=int, default=None, 
+        help="Maximum number of batch files to process per run (for chunking)"
+    )
+    parser.add_argument(
+        "--start-batch-index", type=int, default=0,
+        help="Start processing from this batch file index (0-based)"
+    )
+    parser.add_argument(
+        "--max-time-minutes", type=int, default=None,
+        help="Maximum processing time in minutes before stopping"
+    )
+    parser.add_argument(
+        "--workflow-state-file", type=str, default=None,
+        help="Path to save workflow state for chunking"
+    )
 
     args = parser.parse_args()
 
@@ -860,16 +950,33 @@ def main():
     # Create enhancer
     enhancer = OptimizedBatchFileEnhancer(art_processor, max_workers=args.max_workers)
 
-    # Enhance all batch files
-    result = enhancer.enhance_all_batch_files(args.batch_dir)
+    # Enhance all batch files with chunking parameters
+    result = enhancer.enhance_all_batch_files(
+        batch_dir=args.batch_dir,
+        max_batch_files=args.max_batch_files,
+        start_batch_index=args.start_batch_index,
+        max_time_minutes=args.max_time_minutes,
+        workflow_state_file=args.workflow_state_file
+    )
 
     if result["success"]:
         print(f"\n🎉 Batch enhancement completed successfully!")
         print(
             f"   📁 Enhanced {result['enhanced_files']} out of {result['total_files']} files"
         )
-        print(f"   ⏱️  Total time: {result['total_time']:.2f}s")
+        print(f"   🔄 Processed in chunk: {result.get('processed_in_chunk', 'N/A')}")
+        print(f"   ⏱️  Total time: {result['total_time']:.2f}s ({result.get('elapsed_minutes', 0):.1f} minutes)")
         print(f"   📂 Enhanced files saved with '_enhanced.jsonl' suffix")
+        
+        # Show chunking info if available
+        if 'chunking_info' in result:
+            chunk_info = result['chunking_info']
+            print(f"   🔄 Chunking: {chunk_info['start_index']}-{chunk_info['end_index']} of {result['total_files']}")
+            if chunk_info.get('time_limit_reached'):
+                print(f"   ⏰ Time limit reached ({chunk_info['max_time_minutes']} minutes)")
+            if result.get('workflow_state', {}).get('status') == 'in_progress':
+                print(f"   🔄 More files remaining: {len(result['workflow_state']['remaining_batch_files'])}")
+                print(f"   📄 Next batch index: {result['workflow_state']['resume_data']['next_batch_index']}")
     else:
         print(f"\n❌ Batch enhancement failed: {result.get('error', 'Unknown error')}")
 
