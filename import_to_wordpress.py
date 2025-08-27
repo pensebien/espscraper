@@ -230,6 +230,9 @@ def fetch_existing_products(
         return existing
     except Exception as e:
         logging.warning(f"Failed to fetch existing products: {e}")
+        # For local development, continue without existing products
+        if "localhost" in wp_api_url or "localsite.io" in wp_api_url:
+            logging.info("Local development detected - continuing without existing products check")
         return {}
 
 
@@ -303,8 +306,12 @@ def import_product_to_wp(
         
         resp.raise_for_status()
         
-        # Add longer delay to avoid triggering Cloudflare rate limiting
-        time.sleep(3)  # Increased delay for better Cloudflare bypass
+        # Add delay to avoid overwhelming the server
+        # Shorter delay for local development
+        if "localhost" in wp_api_url or "localsite.io" in wp_api_url:
+            time.sleep(0.5)  # Short delay for local development
+        else:
+            time.sleep(3)  # Longer delay for production to avoid Cloudflare
         
         return resp.json()
     except requests.exceptions.RequestException as e:

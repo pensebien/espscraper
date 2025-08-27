@@ -37,11 +37,11 @@ on:
 jobs:
   import-products:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
@@ -78,11 +78,18 @@ jobs:
         echo "WP_API_URL=$API_URL" >> $GITHUB_ENV
         echo "WP_API_KEY=$API_KEY" >> $GITHUB_ENV
         
+        # Set Basic Auth credentials for local development
+        if [ "$ENVIRONMENT" = "development" ]; then
+          echo "WP_BASIC_AUTH_USER=admin" >> $GITHUB_ENV
+          echo "WP_BASIC_AUTH_PASS=admin" >> $GITHUB_ENV
+          echo "✅ Basic Auth credentials set for local development"
+        fi
+        
     - name: Copy artifacts from artifacts branch
       id: copy-artifacts
       run: |
         echo "📁 Copying artifacts from artifacts branch..."
-        
+
         # Fetch the artifacts branch
         git fetch origin artifacts:artifacts
         
