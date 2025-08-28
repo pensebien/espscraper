@@ -146,7 +146,7 @@ def save_progress(progress):
 
 
 def update_heartbeat(
-    status, imported=0, errors=0, total=0, current_product=None, mode=None
+    status, imported=0, errors=0, total=0, current_product=None, mode=None, recent_imports=None, import_queue=None
 ):
     """Update heartbeat file with current progress."""
     heartbeat = {
@@ -157,9 +157,16 @@ def update_heartbeat(
         "percent": round((imported / total * 100) if total > 0 else 0, 1),
         "current_product": current_product,
         "mode": mode,
+        "recent_imports": recent_imports or [],
+        "import_queue": import_queue or [],
+        "start_time": getattr(update_heartbeat, 'start_time', datetime.now().isoformat()),
         "timestamp": datetime.now().isoformat(),
         "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+    # Store start time on first call
+    if not hasattr(update_heartbeat, 'start_time'):
+        update_heartbeat.start_time = datetime.now().isoformat()
 
     with open(HEARTBEAT_FILE, "w") as f:
         json.dump(heartbeat, f, indent=2)
@@ -487,7 +494,7 @@ def main():
     )
 
     # Initialize heartbeat
-    update_heartbeat("starting", 0, 0, args.product_limit, None, args.mode)
+    update_heartbeat("starting", 0, 0, args.product_limit, None, args.mode, [], [])
 
     # Load or reset progress
     progress = load_progress()
@@ -533,6 +540,10 @@ def main():
     current_batch_file = None
     current_line_number = 0
 
+    # Track recent imports and queue
+    recent_imports = []
+    import_queue = []
+    
     # Update heartbeat with initial state
     update_heartbeat(
         "running",
@@ -541,6 +552,8 @@ def main():
         total,
         "Starting import...",
         args.mode,
+        recent_imports,
+        import_queue
     )
 
     # Determine which directory and file pattern to use
@@ -665,13 +678,25 @@ def main():
 
                     # Update heartbeat with current product
                     current_product_info = f"{product_name} (ID: {product_id})"
+                    
+                    # Create enhanced product data
+                    enhanced_product = {
+                        "name": product_name,
+                        "product_id": product_id,
+                        "sku": product.get("SKU") or product.get("sku") or "",
+                        "image_url": product.get("image_url") or product.get("ImageURL") or "",
+                        "status": "importing"
+                    }
+                    
                     update_heartbeat(
                         "running",
                         current_imported,
                         current_errors,
                         total,
-                        current_product_info,
+                        enhanced_product,
                         args.mode,
+                        recent_imports,
+                        import_queue
                     )
 
                     # Import
@@ -690,6 +715,19 @@ def main():
                             imported_ids.add(product_id)
                             batch_line_map[batch_file] = line_num
                             print(f"✅ Imported: {product_name} (ID: {product_id})")
+                            
+                            # Add to recent imports
+                            imported_product = {
+                                "name": product_name,
+                                "product_id": product_id,
+                                "sku": product.get("SKU") or product.get("sku") or "",
+                                "image_url": product.get("image_url") or product.get("ImageURL") or "",
+                                "status": "success"
+                            }
+                            recent_imports.append(imported_product)
+                            # Keep only last 10 recent imports
+                            if len(recent_imports) > 10:
+                                recent_imports = recent_imports[-10:]
                         else:
                             current_errors += 1
                             error_msg = result.get("message", "Unknown error")
@@ -725,8 +763,10 @@ def main():
                             current_imported,
                             current_errors,
                             total,
-                            current_product_info,
+                            enhanced_product,
                             args.mode,
+                            recent_imports,
+                            import_queue
                         )
 
                 except json.JSONDecodeError as e:
@@ -776,6 +816,8 @@ def main():
             total,
             "Import completed successfully",
             args.mode,
+            recent_imports,
+            import_queue
         )
     else:
         update_heartbeat(
@@ -785,6 +827,8 @@ def main():
             total,
             f"Import completed with {current_errors} errors",
             args.mode,
+            recent_imports,
+            import_queue
         )
 
     # Clean up progress file on successful completion
