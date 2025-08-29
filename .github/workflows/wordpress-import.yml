@@ -67,16 +67,19 @@ jobs:
         fi
         
         API_URL="$BASE_URL/wp-json/promostandards-importer/v1/upload"
+        WORKFLOW_STATUS_URL="$BASE_URL/wp-json/promostandards-importer/v1/workflow-status"
         API_KEY="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"
         
         echo "✅ Using direct endpoints"
         echo "Base URL: $BASE_URL"
         echo "API URL: $API_URL"
+        echo "Workflow Status URL: $WORKFLOW_STATUS_URL"
         echo "API Key: ${API_KEY:0:10}..."
         
         # Set environment variables
         echo "WP_API_URL=$API_URL" >> $GITHUB_ENV
         echo "WP_API_KEY=$API_KEY" >> $GITHUB_ENV
+        echo "WORKFLOW_STATUS_URL=$WORKFLOW_STATUS_URL" >> $GITHUB_ENV
         
         # Load Basic Auth credentials from .env.dev file for local development
         if [ "$ENVIRONMENT" = "development" ]; then
@@ -126,12 +129,32 @@ jobs:
         
         echo "✅ Artifacts copied successfully"
         
+    - name: Notify WordPress - Workflow Started
+      run: |
+        echo "📡 Notifying WordPress that workflow has started..."
+        curl -X POST "$WORKFLOW_STATUS_URL" \
+          -H "Content-Type: application/json" \
+          -H "X-API-Key: $WP_API_KEY" \
+          -d "{
+            \"workflow_id\": \"${{ github.run_id }}\",
+            \"status\": \"running\",
+            \"message\": \"GitHub Actions workflow started\",
+            \"details\": {
+              \"environment\": \"${{ github.event.inputs.environment }}\",
+              \"mode\": \"${{ github.event.inputs.mode }}\",
+              \"product_limit\": \"${{ github.event.inputs.product_limit }}\",
+              \"use_enhanced_files\": \"${{ github.event.inputs.use_enhanced_files }}\"
+            }
+          }"
+        echo "✅ WordPress notified of workflow start"
+        
     - name: Process and import products
       id: import-process
       env:
         IMPORT_MODE: ${{ github.event.inputs.mode }}
         PRODUCT_LIMIT: ${{ github.event.inputs.product_limit }}
         USE_ENHANCED_FILES: ${{ github.event.inputs.use_enhanced_files }}
+      continue-on-error: true
       run: |
         echo "🚀 Starting WordPress Import"
         echo "Environment: ${{ github.event.inputs.environment }}"
@@ -214,3 +237,24 @@ jobs:
           echo "❌ Import Errors:"
           cat import_errors.json | python -m json.tool
         fi
+        
+        # Notify WordPress that workflow has completed
+        echo ""
+        echo "📡 Notifying WordPress that workflow has completed..."
+        curl -X POST "$WORKFLOW_STATUS_URL" \
+          -H "Content-Type: application/json" \
+          -H "X-API-Key: $WP_API_KEY" \
+          -d "{
+            \"workflow_id\": \"${{ github.run_id }}\",
+            \"status\": \"completed\",
+            \"message\": \"GitHub Actions workflow completed successfully\",
+            \"details\": {
+              \"environment\": \"${{ github.event.inputs.environment }}\",
+              \"mode\": \"${{ github.event.inputs.mode }}\",
+              \"product_limit\": \"${{ github.event.inputs.product_limit }}\",
+              \"use_enhanced_files\": \"${{ github.event.inputs.use_enhanced_files }}\",
+              \"run_id\": \"${{ github.run_id }}\",
+              \"run_number\": \"${{ github.run_number }}\"
+            }
+          }"
+        echo "✅ WordPress notified of workflow completion"

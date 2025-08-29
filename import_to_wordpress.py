@@ -170,6 +170,68 @@ def update_heartbeat(
 
     with open(HEARTBEAT_FILE, "w") as f:
         json.dump(heartbeat, f, indent=2)
+    
+    # Also send real-time update to WordPress
+    try:
+        update_wordpress_realtime(heartbeat)
+    except Exception as e:
+        print(f"⚠️ Warning: Could not send real-time update to WordPress: {e}")
+
+
+def update_wordpress_realtime(heartbeat_data):
+    """Send real-time progress update to WordPress via REST API."""
+    global _cloudflare_session, _base_url
+    
+    if not _cloudflare_session or not _base_url:
+        return  # No session available
+    
+    try:
+        # Construct workflow status URL
+        workflow_status_url = _base_url + "/wp-json/promostandards-importer/v1/workflow-status"
+        
+        # Get API key from environment or use a default
+        api_key = os.getenv("WP_API_KEY", "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")
+        
+        # Prepare the real-time update data
+        realtime_data = {
+            "workflow_id": os.getenv("GITHUB_RUN_ID", "local"),
+            "status": "running",
+            "message": f"Importing products: {heartbeat_data['imported']}/{heartbeat_data['total']} ({heartbeat_data['percent']}%)",
+            "details": {
+                "imported": heartbeat_data['imported'],
+                "errors": heartbeat_data['errors'],
+                "total": heartbeat_data['total'],
+                "percent": heartbeat_data['percent'],
+                "current_product": heartbeat_data['current_product'],
+                "recent_imports": heartbeat_data['recent_imports'],
+                "import_queue": heartbeat_data['import_queue'],
+                "mode": heartbeat_data['mode'],
+                "timestamp": heartbeat_data['timestamp']
+            }
+        }
+        
+        # Send real-time update
+        headers = {
+            "Content-Type": "application/json",
+            "X-API-Key": api_key,
+            "Accept-Encoding": "identity"
+        }
+        
+        resp = _cloudflare_session.post(
+            workflow_status_url,
+            json=realtime_data,
+            headers=headers,
+            timeout=10  # Short timeout for real-time updates
+        )
+        
+        if resp.status_code == 200:
+            print(f"📡 Real-time update sent to WordPress: {heartbeat_data['imported']}/{heartbeat_data['total']} ({heartbeat_data['percent']}%)")
+        else:
+            print(f"⚠️ Real-time update failed: {resp.status_code}")
+            
+    except Exception as e:
+        print(f"⚠️ Real-time update error: {e}")
+        # Don't fail the import for real-time update errors
 
 
 def cleanup_heartbeat():
@@ -728,6 +790,24 @@ def main():
                             # Keep only last 10 recent imports
                             if len(recent_imports) > 10:
                                 recent_imports = recent_imports[-10:]
+                            
+                            # Send immediate real-time update for this product
+                            try:
+                                immediate_heartbeat = {
+                                    "status": "running",
+                                    "imported": current_imported,
+                                    "errors": current_errors,
+                                    "total": total,
+                                    "current_product": enhanced_product,
+                                    "mode": args.mode,
+                                    "recent_imports": recent_imports,
+                                    "import_queue": import_queue,
+                                    "timestamp": datetime.now().isoformat()
+                                }
+                                update_wordpress_realtime(immediate_heartbeat)
+                            except Exception as e:
+                                print(f"⚠️ Could not send immediate update: {e}")
+                                
                         else:
                             current_errors += 1
                             error_msg = result.get("message", "Unknown error")
