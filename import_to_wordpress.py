@@ -18,7 +18,8 @@ from espscraper.batch_processor import BatchProcessor
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-PROGRESS_FILE = "import_progress.json"
+# REMOVED: Old progress file system that was causing conflicts
+# PROGRESS_FILE = "import_progress.json"
 HEARTBEAT_FILE = "import_heartbeat.json"
 
 
@@ -133,16 +134,17 @@ def establish_cloudflare_session(base_url):
         return create_cloudflare_session()
 
 
-def load_progress():
-    if os.path.exists(PROGRESS_FILE):
-        with open(PROGRESS_FILE, "r") as f:
-            return json.load(f)
-    return {}
-
-
-def save_progress(progress):
-    with open(PROGRESS_FILE, "w") as f:
-        json.dump(progress, f, indent=2)
+# REMOVED: Old progress file functions that were causing conflicts
+# def load_progress():
+#     if os.path.exists(PROGRESS_FILE):
+#         with open(PROGRESS_FILE, "r") as f:
+#             return json.load(f)
+#     return {}
+# 
+# 
+# def save_progress(progress):
+#     with open(PROGRESS_FILE, "w") as f:
+#         json.dump(progress, f, indent=2)
 
 
 def update_heartbeat(
@@ -914,8 +916,8 @@ def main():
     # Clean up progress file on successful completion
     if current_imported > 0 and current_errors == 0:
         cleanup_heartbeat()
-        if os.path.exists(PROGRESS_FILE):
-            os.remove(PROGRESS_FILE)
+        # No old progress file to clean
+        pass
         print("🧹 Cleaned up progress files")
 
 
