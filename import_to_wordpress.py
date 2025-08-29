@@ -560,20 +560,13 @@ def main():
     # Initialize heartbeat
     update_heartbeat("starting", 0, 0, args.product_limit, None, args.mode, [], [])
 
-    # Load or reset progress
-    progress = load_progress()
-    if progress and (
-        progress.get("mode") != args.mode or progress.get("limit") != args.product_limit
-    ):
-        print("⚠️ Mode or limit changed since last run. Resetting progress.")
-        progress = {}
-    imported = progress.get("imported", 0)
-    imported_ids = set(progress.get("imported_ids", []))
-    last_batch = progress.get("last_batch_file")
-    last_line = progress.get("last_line_number")
-    batch_line_map = progress.get(
-        "batch_line_map", {}
-    )  # {batch_file: last_line_number}
+    # Start fresh (no progress file to avoid conflicts)
+    progress = {}
+    imported = 0
+    imported_ids = set()
+    last_batch = None
+    last_line = 0
+    batch_line_map = {}  # {batch_file: last_line_number}
 
     # Fetch existing products for sync mode
     existing_products = {}
@@ -823,20 +816,8 @@ def main():
                             f"❌ Exception importing: {product_name} (ID: {product_id}) - {str(e)}"
                         )
 
-                    # Update progress file
-                    save_progress(
-                        {
-                            "imported": current_imported,
-                            "errors": current_errors,
-                            "imported_ids": list(imported_ids),
-                            "last_batch_file": batch_file,
-                            "last_line_number": line_num,
-                            "batch_line_map": batch_line_map,
-                            "mode": args.mode,
-                            "limit": args.product_limit,
-                            "timestamp": datetime.now().isoformat(),
-                        }
-                    )
+                    # Progress tracking removed to avoid conflicts
+                    # Only heartbeat file is used for progress tracking
 
                     # Update heartbeat every 5 products or on errors
                     if current_imported % 5 == 0 or current_errors > 0:
