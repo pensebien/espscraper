@@ -129,24 +129,43 @@ jobs:
         
         echo "✅ Artifacts copied successfully"
         
-    - name: Notify WordPress - Workflow Started
-      run: |
-        echo "📡 Notifying WordPress that workflow has started..."
-        curl -X POST "$WORKFLOW_STATUS_URL" \
-          -H "Content-Type: application/json" \
-          -H "X-API-Key: $WP_API_KEY" \
-          -d "{
-            \"workflow_id\": \"${{ github.run_id }}\",
-            \"status\": \"running\",
-            \"message\": \"GitHub Actions workflow started\",
-            \"details\": {
-              \"environment\": \"${{ github.event.inputs.environment }}\",
-              \"mode\": \"${{ github.event.inputs.mode }}\",
-              \"product_limit\": \"${{ github.event.inputs.product_limit }}\",
-              \"use_enhanced_files\": \"${{ github.event.inputs.use_enhanced_files }}\"
-            }
-          }"
-        echo "✅ WordPress notified of workflow start"
+            - name: Notify WordPress - Workflow Started
+          run: |
+            echo "📡 Notifying WordPress that workflow has started..."
+            # Add Basic Auth for development environment
+            if [ "${{ github.event.inputs.environment }}" = "development" ]; then
+              curl -X POST "$WORKFLOW_STATUS_URL" \
+                -H "Content-Type: application/json" \
+                -H "X-API-Key: $WP_API_KEY" \
+                -u "$WP_BASIC_AUTH_USER_DEV:$WP_BASIC_AUTH_PASS_DEV" \
+                -d "{
+                  \"workflow_id\": \"${{ github.run_id }}\",
+                  \"status\": \"running\",
+                  \"message\": \"GitHub Actions workflow started\",
+                  \"details\": {
+                    \"environment\": \"${{ github.event.inputs.environment }}\",
+                    \"mode\": \"${{ github.event.inputs.mode }}\",
+                    \"product_limit\": \"${{ github.event.inputs.product_limit }}\",
+                    \"use_enhanced_files\": \"${{ github.event.inputs.use_enhanced_files }}\"
+                  }
+                }"
+            else
+              curl -X POST "$WORKFLOW_STATUS_URL" \
+                -H "Content-Type: application/json" \
+                -H "X-API-Key: $WP_API_KEY" \
+                -d "{
+                  \"workflow_id\": \"${{ github.run_id }}\",
+                  \"status\": \"running\",
+                  \"message\": \"GitHub Actions workflow started\",
+                  \"details\": {
+                    \"environment\": \"${{ github.event.inputs.environment }}\",
+                    \"mode\": \"${{ github.event.inputs.mode }}\",
+                    \"product_limit\": \"${{ github.event.inputs.product_limit }}\",
+                    \"use_enhanced_files\": \"${{ github.event.inputs.use_enhanced_files }}\"
+                  }
+                }"
+            fi
+            echo "✅ WordPress notified of workflow start"
         
     - name: Process and import products
       id: import-process
@@ -241,20 +260,41 @@ jobs:
         # Notify WordPress that workflow has completed
         echo ""
         echo "📡 Notifying WordPress that workflow has completed..."
-        curl -X POST "$WORKFLOW_STATUS_URL" \
-          -H "Content-Type: application/json" \
-          -H "X-API-Key: $WP_API_KEY" \
-          -d "{
-            \"workflow_id\": \"${{ github.run_id }}\",
-            \"status\": \"completed\",
-            \"message\": \"GitHub Actions workflow completed successfully\",
-            \"details\": {
-              \"environment\": \"${{ github.event.inputs.environment }}\",
-              \"mode\": \"${{ github.event.inputs.mode }}\",
-              \"product_limit\": \"${{ github.event.inputs.product_limit }}\",
-              \"use_enhanced_files\": \"${{ github.event.inputs.use_enhanced_files }}\",
-              \"run_id\": \"${{ github.run_id }}\",
-              \"run_number\": \"${{ github.run_number }}\"
-            }
-          }"
+        # Add Basic Auth for development environment
+        if [ "${{ github.event.inputs.environment }}" = "development" ]; then
+          curl -X POST "$WORKFLOW_STATUS_URL" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: $WP_API_KEY" \
+            -u "$WP_BASIC_AUTH_USER_DEV:$WP_BASIC_AUTH_PASS_DEV" \
+            -d "{
+              \"workflow_id\": \"${{ github.run_id }}\",
+              \"status\": \"completed\",
+              \"message\": \"GitHub Actions workflow completed successfully\",
+              \"details\": {
+                \"environment\": \"${{ github.event.inputs.environment }}\",
+                \"mode\": \"${{ github.event.inputs.mode }}\",
+                \"product_limit\": \"${{ github.event.inputs.product_limit }}\",
+                \"use_enhanced_files\": \"${{ github.event.inputs.use_enhanced_files }}\",
+                \"run_id\": \"${{ github.run_id }}\",
+                \"run_number\": \"${{ github.run_number }}\"
+              }
+            }"
+        else
+          curl -X POST "$WORKFLOW_STATUS_URL" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: $WP_API_KEY" \
+            -d "{
+              \"workflow_id\": \"${{ github.run_id }}\",
+              \"status\": \"completed\",
+              \"message\": \"GitHub Actions workflow completed successfully\",
+              \"details\": {
+                \"environment\": \"${{ github.event.inputs.environment }}\",
+                \"mode\": \"${{ github.event.inputs.mode }}\",
+                \"product_limit\": \"${{ github.event.inputs.product_limit }}\",
+                \"use_enhanced_files\": \"${{ github.event.inputs.use_enhanced_files }}\",
+                \"run_id\": \"${{ github.run_id }}\",
+                \"run_number\": \"${{ github.run_number }}\"
+              }
+            }"
+        fi
         echo "✅ WordPress notified of workflow completion"

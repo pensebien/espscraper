@@ -219,10 +219,20 @@ def update_wordpress_realtime(heartbeat_data):
             "Accept-Encoding": "identity"
         }
         
+        # Add Basic Auth for development environment
+        auth = None
+        if "localsite.io" in _base_url or "localhost" in _base_url:
+            basic_auth_user = os.getenv("WP_BASIC_AUTH_USER")
+            basic_auth_pass = os.getenv("WP_BASIC_AUTH_PASS")
+            if basic_auth_user and basic_auth_pass:
+                auth = (basic_auth_user, basic_auth_pass)
+                print(f"🔐 Using Basic Auth for dev environment: {basic_auth_user}")
+        
         resp = _cloudflare_session.post(
             workflow_status_url,
             json=realtime_data,
             headers=headers,
+            auth=auth,
             timeout=10  # Short timeout for real-time updates
         )
         
